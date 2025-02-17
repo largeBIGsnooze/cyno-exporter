@@ -1,7 +1,6 @@
-
 from datetime import datetime
 from pathlib import Path
-import sys, os, time, shutil, json, concurrent.futures
+import sys, os, time, shutil, json, concurrent.futures, argparse
 import requests
 from PyQt6.QtWidgets import (
     QApplication,
@@ -28,21 +27,22 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QIcon, QPixmap, QAction
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from utils.obj import Wavefront
-from utils.plugins import Revorb, Ww2Ogg, Texconv
+from utils.plugins import Revorb, Ww2Ogg, Texconv, ImageMagick
 
 CONFIG_FILE = "./config.json"
-WINDOW_TITLE = "Cyno Exporter"
+VERSION = "v1.0.1"
+WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
     "sisi": {"name": "Singularity", "id": "SISI"},
-    "thunderdome": {"name": "Thunderdome", "id": "THUNDERDOME"},
     "serenity": {"name": "Serenity", "id": "SERENITY"},
     "duality": {"name": "Duality", "id": "DUALITY"},
-    "chaos": {"name": "Chaos", "id": "CHAOS"},
     "infinity": {"name": "Infinity", "id": "INFINITY"},
     "sharedCache": {"name": "Local", "id": None},
 }
-STYLE_SHEET = open(os.path.join(Path(__file__).parent, "style.qss"), "r", encoding="utf-8").read()
+STYLE_SHEET = open(
+    os.path.join(Path(__file__).parent, "style.qss"), "r", encoding="utf-8"
+).read()
 
 
 class EVEDirectory(QTreeWidgetItem):
@@ -75,6 +75,7 @@ class EVEFile(QTreeWidgetItem):
         self.size = int(size)
         self.respath = respath
         self.resfile_hash = resfile_hash
+
 
 class ResIndex:
     def __init__(self, chinese_client=False, event_logger=None):
@@ -280,7 +281,6 @@ class ResTree(QTreeWidget):
             if response.status_code == 200:
                 with open(dest_path, "wb") as f:
                     f.write(response.content)
-                self.event_logger.add(f"Downloaded: {dest_path}")
             elif response.status_code == 404:
                 return f"404 error: {item.filename}"
 
@@ -295,38 +295,35 @@ class ResTree(QTreeWidget):
         Wavefront().to_obj(out_file)
         self.event_logger.add(f"Obj exported: {out_file}")
 
-    def save_as_png_command(self, item):
-        out_file = self.save_file_command(item)
-        if not out_file:
-            return
-        Texconv().run(out_file)
-        os.remove(out_file)
-        self.event_logger.add(f"Png exported: {out_file}")
+    def save_as_png_command(self, out_file_path):
+        is_normal_map = out_file_path.lower().endswith("_n.dds")
+        out_png = Texconv(is_normal_map=is_normal_map).run(out_file_path)
+        # remove the alpha channel from the normal map
+        if is_normal_map:
+            ImageMagick().run(out_png)
+        os.remove(out_file_path)
 
-    def save_as_ogg_command(self, item):
-        out_file = self.save_file_command(item)
-        if not out_file:
-            return
-
-        stdout, wem = Ww2Ogg().run(out_file, item.filename)
+    def save_as_ogg_command(self, out_file_path):
+        stdout, wem = Ww2Ogg().run(out_file_path)
         temp = os.path.join(
-            os.path.dirname(out_file), f"{item.filename.split('.')[0]}.temp"
+            os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.temp"
         )
 
         if stdout is not None:
-            QMessageBox.warning(self, "Error", str(stdout))
+            self.event_logger.add(
+                f"Could not convert: {out_file_path}\n\n{str(stdout)}"
+            )
             return
 
-        os.remove(out_file)
+        os.remove(out_file_path)
         Revorb().run(wem, temp)
         os.remove(wem)
         os.rename(
             temp,
             os.path.join(
-                os.path.dirname(out_file), f"{item.filename.split('.')[0]}.ogg"
+                os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.ogg"
             ),
         )
-        self.event_logger.add(f"Ogg exported: {out_file}")
 
     def save_file_command(self, item, multiple=False, multiple_destination=None):
         if not multiple:
@@ -345,13 +342,18 @@ class ResTree(QTreeWidget):
                 ),
                 out_file_path,
             )
-            if not multiple:
-                self.event_logger.add(f"Saving file: {out_file_path}")
         else:
             self.download_file(
                 item=item,
                 dest_path=out_file_path,
             )
+
+        if out_file_path.lower().endswith(".dds"):
+            self.save_as_png_command(out_file_path)
+        elif out_file_path.lower().endswith(".wem"):
+            self.save_as_ogg_command(out_file_path)
+        if not multiple:
+            self.event_logger.add(f"Exported resfile to: {out_file_path}")
         return out_file_path if not multiple else item.filename
 
     def save_folder_command(self, item):
@@ -363,7 +365,8 @@ class ResTree(QTreeWidget):
         files = self.copy_folder_files(item, path_segments)
 
         loading = LoadingScreenWindow(files, True)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=25) as worker:
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as worker:
             futures = []
 
             for i, file in enumerate(files):
@@ -372,20 +375,16 @@ class ResTree(QTreeWidget):
                         os.path.join(dest_folder, file.respath)
                     )
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                    if self.is_shared_cache:
-                        futures.append(
-                            worker.submit(self.save_file_command, file, True, file_path)
-                        )
-                    else:
-                        futures.append(
-                            worker.submit(self.download_file, file, file_path)
-                        )
+                    futures.append(
+                        worker.submit(self.save_file_command, file, True, file_path)
+                    )
 
             for future in concurrent.futures.as_completed(futures):
                 loading.label.setText(future.result())
                 loading.setValue(loading.value() + 1)
                 QApplication.processEvents()
 
+        self.event_logger.add(f"Exported {len(files)} resfiles to {dest_folder}")
         loading.close()
 
     def load_resfiles(self, parent, client=None):
@@ -423,7 +422,7 @@ class ResTree(QTreeWidget):
                 start = time.time()
                 self.load(root=root, resfiles=resfileindex, bankfileinfo=bnk)
                 self.event_logger.add(
-                    f'Took {time.time() - start:.2f}s to load resfiles'
+                    f"Took {time.time() - start:.2f}s to load resfiles"
                 )
             except OSError:
                 QMessageBox.warning(
@@ -437,7 +436,9 @@ class ResTree(QTreeWidget):
             if build is not None:
                 resfileindex_file = resindex.fetch_resindexfile(build=build)
 
-                with open(os.path.join("resindex", resfileindex_file), "r", encoding="utf-8") as f:
+                with open(
+                    os.path.join("resindex", resfileindex_file), "r", encoding="utf-8"
+                ) as f:
                     resfileindex = ResIndex.resindexfile_object(f.read())
 
                 bnk_hash = ResIndex.get_soundbankinfo(resfileindex)
@@ -450,11 +451,9 @@ class ResTree(QTreeWidget):
                 )
                 self.event_logger.add("Loading resfiles...")
                 start = time.time()
-                self.load(
-                    root=root, resfiles=resfileindex, bankfileinfo=bnk
-                )
+                self.load(root=root, resfiles=resfileindex, bankfileinfo=bnk)
                 self.event_logger.add(
-                    f'Took {time.time() - start:.2f}s to load resfiles'
+                    f"Took {time.time() - start:.2f}s to load resfiles"
                 )
             else:
                 root.setHidden(True)
@@ -475,7 +474,6 @@ class ResTree(QTreeWidget):
             parent.add(dir_item)
             parent.setText(1, self.format_filesize(self.get_directory_size(parent)))
         return dir_map[path]
-
 
     def add_resfile_filter(self, i, name):
         if "_lowdetail" in name or "_mediumdetail" in name:
@@ -603,12 +601,6 @@ class ResTree(QTreeWidget):
                 if item.filename.endswith(".gr2"):
                     menu.addSeparator()
                     export_obj_action = menu.addAction("Export as .obj")
-                elif item.filename.endswith(".dds"):
-                    menu.addSeparator()
-                    export_png_action = menu.addAction("Export as .png")
-                elif item.filename.endswith(".wem"):
-                    menu.addSeparator()
-                    export_ogg_action = menu.addAction("Export as .ogg")
 
             menu.installEventFilter(ContextMenuFilter(menu))
             action = menu.exec(self.mapToGlobal(point))
@@ -622,10 +614,6 @@ class ResTree(QTreeWidget):
                 self.save_file_command(item)
             elif action == export_obj_action:
                 self.save_as_obj_command(item)
-            elif action == export_png_action:
-                self.save_as_png_command(item)
-            elif action == export_ogg_action:
-                self.save_as_ogg_command(item)
 
 
 class ContextMenuFilter(QObject):
@@ -683,18 +671,6 @@ class CynoExporterWindow(QMainWindow):
             event_logger=self.event_logger,
             shared_cache=self.set_shared_cache_action,
         )
-        self.thunderdome = ResTree(
-            self,
-            f"eveclient_{CLIENTS['thunderdome']['id']}.json",
-            event_logger=self.event_logger,
-            shared_cache=self.set_shared_cache_action,
-        )
-        self.chaos = ResTree(
-            self,
-            f"eveclient_{CLIENTS['chaos']['id']}.json",
-            event_logger=self.event_logger,
-            shared_cache=self.set_shared_cache_action,
-        )
         self.serenity = ResTree(
             self,
             f"eveclient_{CLIENTS['serenity']['id']}.json",
@@ -713,8 +689,6 @@ class CynoExporterWindow(QMainWindow):
         self.tab_widget.addTab(self.shared_cache_tq, CLIENTS["sharedCache"]["name"])
         self.tab_widget.addTab(self.tranquility, CLIENTS["tq"]["name"])
         self.tab_widget.addTab(self.singularity, CLIENTS["sisi"]["name"])
-        self.tab_widget.addTab(self.thunderdome, CLIENTS["thunderdome"]["name"])
-        self.tab_widget.addTab(self.chaos, CLIENTS["chaos"]["name"])
         self.tab_widget.addTab(self.serenity, CLIENTS["serenity"]["name"])
         self.tab_widget.addTab(self.infinity, CLIENTS["infinity"]["name"])
 
@@ -765,13 +739,9 @@ class CynoExporterWindow(QMainWindow):
             self.tranquility.load_resfiles(self.tranquility, self.tranquility.client)
         elif i == 2 and not self.singularity.are_resfiles_loaded:
             self.singularity.load_resfiles(self.singularity, self.singularity.client)
-        elif i == 3 and not self.thunderdome.are_resfiles_loaded:
-            self.thunderdome.load_resfiles(self.thunderdome, self.thunderdome.client)
-        elif i == 4 and not self.chaos.are_resfiles_loaded:
-            self.chaos.load_resfiles(self.chaos, self.chaos.client)
-        elif i == 5 and not self.serenity.are_resfiles_loaded:
+        elif i == 3 and not self.serenity.are_resfiles_loaded:
             self.serenity.load_resfiles(self.serenity, self.serenity.client)
-        elif i == 6 and not self.infinity.are_resfiles_loaded:
+        elif i == 4 and not self.infinity.are_resfiles_loaded:
             self.infinity.load_resfiles(self.infinity, self.infinity.client)
 
         self.tab_widget.tabBar().setEnabled(True)
@@ -785,6 +755,7 @@ class DialogPanel(QDialog):
             self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
         )
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
+
 
 class EventLogger(QObject):
     on_update = pyqtSignal()
@@ -962,16 +933,23 @@ class LoadingScreenWindow(QProgressDialog):
             if not stay_on_top
             else Qt.WindowModality.ApplicationModal
         )
+        self.show()
         self.raise_()
 
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dev", action="store_true")
+    args = parser.parse_args()
+
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon("icon.ico"))
     window = CynoExporterWindow()
     license_agreement = LicenseAgreementDialog()
     license_agreement.setStyleSheet(STYLE_SHEET)
-    if license_agreement.exec() == QDialog.DialogCode.Accepted:
+
+    def show():
         window.show()
         window.tab_widget.tabBar().setEnabled(False)
         window.shared_cache_tq.load_resfiles(
@@ -979,3 +957,9 @@ if __name__ == "__main__":
         )
         window.tab_widget.tabBar().setEnabled(True)
         sys.exit(app.exec())
+
+    if not args.dev:
+        if license_agreement.exec() == QDialog.DialogCode.Accepted:
+            show()
+    else:
+        show()
