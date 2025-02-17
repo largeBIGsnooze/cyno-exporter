@@ -34,11 +34,32 @@ class Revorb(Plugins):
 
 
 class Texconv(Plugins):
-    def __init__(self):
+    def __init__(self, is_normal_map=False):
         super().__init__("texconv", "texconv.exe")
+        self.is_normal_map = is_normal_map
 
     def run(self, *args):
-        super().run(args[0], "-ft", "PNG", "-y", "-o", os.path.dirname(args[0]))
+        filename = os.path.splitext(args[0])[0]
+        dir_path = os.path.dirname(args[0])
+        stdout = super().run(
+            args[0],
+            "-ft",
+            "PNG",
+            *["-f", "R8G8B8A8_UNORM"] if self.is_normal_map else "",
+            "-y",
+            "-o",
+            dir_path,
+        )
+
+        return os.path.join(dir_path, f"{filename}.png")
+
+
+class ImageMagick(Plugins):
+    def __init__(self):
+        super().__init__("imagemagick", "magick.exe")
+
+    def run(self, *args):
+        super().run(args[0], "-alpha", "off", args[0])
 
 
 class Ww2Ogg(Plugins):
@@ -46,7 +67,7 @@ class Ww2Ogg(Plugins):
         super().__init__("ww2ogg", "ww2ogg.exe")
 
     def run(self, *args):
-        filename = os.path.splitext(args[1])
+        filename = os.path.splitext(args[0])
         dest = os.path.dirname(args[0])
         old = os.path.join(dest, f"{filename[0]}{filename[1]}")
         new = os.path.join(dest, f"{filename[0]}.ogg")
