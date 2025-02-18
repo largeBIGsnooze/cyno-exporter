@@ -33,34 +33,14 @@ class Revorb(Plugins):
         super().run(*args)
 
 
-class Texconv(Plugins):
-    def __init__(self, is_normal_map=False):
-        super().__init__("texconv", "texconv.exe")
-        self.is_normal_map = is_normal_map
+class NvttExport(Plugins):
+    def __init__(self):
+        super().__init__("nvidia", "nvtt_export.exe")
 
     def run(self, *args):
         filename = os.path.splitext(args[0])[0]
         dir_path = os.path.dirname(args[0])
-        stdout = super().run(
-            args[0],
-            "-ft",
-            "PNG",
-            *["-f", "R8G8B8A8_UNORM"] if self.is_normal_map else "",
-            "-y",
-            "-o",
-            dir_path,
-        )
-
-        return os.path.join(dir_path, f"{filename}.png")
-
-
-class ImageMagick(Plugins):
-    def __init__(self):
-        super().__init__("imagemagick", "magick.exe")
-
-    def run(self, *args):
-        super().run(args[0], "-alpha", "off", args[0])
-
+        super().run(args[0], "-o", os.path.join(dir_path, f"{filename}.png"))
 
 class Ww2Ogg(Plugins):
     def __init__(self):

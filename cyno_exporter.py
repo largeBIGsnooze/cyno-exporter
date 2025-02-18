@@ -27,10 +27,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QIcon, QPixmap, QAction
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from utils.obj import Wavefront
-from utils.plugins import Revorb, Ww2Ogg, Texconv, ImageMagick
+from utils.plugins import Revorb, Ww2Ogg, NvttExport
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.0.1"
+VERSION = "v1.1.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
@@ -296,11 +296,7 @@ class ResTree(QTreeWidget):
         self.event_logger.add(f"Obj exported: {out_file}")
 
     def save_as_png_command(self, out_file_path):
-        is_normal_map = out_file_path.lower().endswith("_n.dds")
-        out_png = Texconv(is_normal_map=is_normal_map).run(out_file_path)
-        # remove the alpha channel from the normal map
-        if is_normal_map:
-            ImageMagick().run(out_png)
+        NvttExport().run(out_file_path)
         os.remove(out_file_path)
 
     def save_as_ogg_command(self, out_file_path):
