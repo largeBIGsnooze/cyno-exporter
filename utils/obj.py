@@ -1,4 +1,4 @@
-import os, json
+import os, json, re
 from utils.plugins import Gr2ToJson
 
 
@@ -7,7 +7,7 @@ class Wavefront:
     def from_gr2_json(obj):
         data = []
         with open(f"{obj}.gr2_json", "r") as f:
-            gr2_json = json.loads(f.read())
+            gr2_json = json.loads(re.sub(r"\-nan\(ind\)|\-inf|inf", "0", f.read()))
 
         for mesh in gr2_json["meshes"]:
             vertex = mesh["vertex"]
