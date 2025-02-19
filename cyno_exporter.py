@@ -30,14 +30,14 @@ from utils.obj import Wavefront
 from utils.plugins import Revorb, Ww2Ogg, NvttExport
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.1.0"
+VERSION = "v1.2.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
     "sisi": {"name": "Singularity", "id": "SISI"},
-    "serenity": {"name": "Serenity", "id": "SERENITY"},
-    "duality": {"name": "Duality", "id": "DUALITY"},
-    "infinity": {"name": "Infinity", "id": "INFINITY"},
+    "serenity": {"name": "Serenity", "id": None},
+    "duality": {"name": "Duality", "id": None},
+    "infinity": {"name": "Infinity", "id": None},
     "sharedCache": {"name": "Local", "id": None},
 }
 STYLE_SHEET = open(
@@ -84,18 +84,10 @@ class ResIndex:
         if not chinese_client:
             self.binaries_url = "https://binaries.eveonline.com"
             self.resources_url = "https://resources.eveonline.com"
-        else:
-            self.chinese_url = (
-                "https://eve-china-version-files.oss-cn-hangzhou.aliyuncs.com"
-            )
-            self.binaries_url = "https://ma79.gdl.netease.com/eve/binaries"
-            self.resources_url = "https://ma79.gdl.netease.com/eve/resources"
 
     def fetch_client(self, client, timeout=10):
         if not self.chinese_client:
             response = requests.get(f"{self.binaries_url}/{client}", timeout=timeout)
-        else:
-            response = requests.get(f"{self.chinese_url}/{client}", timeout=timeout)
         try:
             if response.status_code == 200:
                 client = response.json()
@@ -134,7 +126,7 @@ class ResIndex:
         )
 
     def fetch_resindexfile(self, build):
-        base_url = self.chinese_url if self.chinese_client else self.binaries_url
+        base_url = self.binaries_url
         response = requests.get(f"{base_url}/eveonline_{build}.txt")
         self.event_logger.add(f"Requesting resindex: {base_url}/eveonline_{build}.txt")
         if response.status_code == 200:
@@ -282,8 +274,8 @@ class ResTree(QTreeWidget):
                 with open(dest_path, "wb") as f:
                     f.write(response.content)
             elif response.status_code == 404:
-                return f"404 error: {item.filename}"
-
+                self.event_logger.add(f"404 error: {item.filename}")
+                return
             return item.filename
         except:
             self.event_logger.add(f"Request failed: {url}")
@@ -667,26 +659,10 @@ class CynoExporterWindow(QMainWindow):
             event_logger=self.event_logger,
             shared_cache=self.set_shared_cache_action,
         )
-        self.serenity = ResTree(
-            self,
-            f"eveclient_{CLIENTS['serenity']['id']}.json",
-            chinese_client=True,
-            event_logger=self.event_logger,
-            shared_cache=self.set_shared_cache_action,
-        )
-        self.infinity = ResTree(
-            self,
-            f"eveclient_{CLIENTS['infinity']['id']}.json",
-            chinese_client=True,
-            event_logger=self.event_logger,
-            shared_cache=self.set_shared_cache_action,
-        )
 
         self.tab_widget.addTab(self.shared_cache_tq, CLIENTS["sharedCache"]["name"])
         self.tab_widget.addTab(self.tranquility, CLIENTS["tq"]["name"])
         self.tab_widget.addTab(self.singularity, CLIENTS["sisi"]["name"])
-        self.tab_widget.addTab(self.serenity, CLIENTS["serenity"]["name"])
-        self.tab_widget.addTab(self.infinity, CLIENTS["infinity"]["name"])
 
         self.menu_bar = QMenuBar()
         self.setMenuBar(self.menu_bar)
@@ -725,6 +701,8 @@ class CynoExporterWindow(QMainWindow):
         self.tab_widget.tabBar().setEnabled(True)
 
     def closeEvent(self, event):
+        # i do this because if you exit while its still loading resfiles
+        # the app will persist due to how the loading widget operates
         os.system('taskkill /F /IM "Cyno Exporter.exe"')
 
     def on_tab_change(self, i):
@@ -735,10 +713,7 @@ class CynoExporterWindow(QMainWindow):
             self.tranquility.load_resfiles(self.tranquility, self.tranquility.client)
         elif i == 2 and not self.singularity.are_resfiles_loaded:
             self.singularity.load_resfiles(self.singularity, self.singularity.client)
-        elif i == 3 and not self.serenity.are_resfiles_loaded:
-            self.serenity.load_resfiles(self.serenity, self.serenity.client)
-        elif i == 4 and not self.infinity.are_resfiles_loaded:
-            self.infinity.load_resfiles(self.infinity, self.infinity.client)
+        # more servers to be added
 
         self.tab_widget.tabBar().setEnabled(True)
 
