@@ -1,11 +1,14 @@
 <h1>
 Cyno Exporter
+<img src="https://img.shields.io/badge/Windows-10%20&%2011-blue">
 <img align="right" src="./icon.ico" width="65px">
 </h1>
-This application reads and extracts files from EVE Online's local cache and all of the available server archives
+
+**Cyno Exporter** is an application that reads and extracts files from EVE Online's local cache and all of the available server archives. With an intuitive UI from which you can browse.
 
 <hr>
 <img src="./demo.png" width="75%">
+
 
 ## Installation
 
