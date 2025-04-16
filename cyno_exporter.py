@@ -30,7 +30,7 @@ from utils.obj import Wavefront
 from utils.plugins import Revorb, Ww2Ogg, NvttExport
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.2.0"
+VERSION = "v1.3.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
