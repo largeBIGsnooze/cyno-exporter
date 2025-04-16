@@ -259,11 +259,12 @@ class ResTree(QTreeWidget):
                 with open(dest_path, "wb") as f:
                     f.write(response.content)
             elif response.status_code == 404:
-                return "404 error: download_file_itemless"
+                self.event_logger.add(f"404 error: {url}")
+                return
         except:
             self.event_logger.add(f"Request failed: {url}")
 
-    def download_file(self, item, dest_path):
+    def download_file(self, item, dest_path, retries=0):
         resindex = ResIndex(
             chinese_client=self.chinese_client, event_logger=self.event_logger
         )
@@ -273,6 +274,12 @@ class ResTree(QTreeWidget):
             if response.status_code == 200:
                 with open(dest_path, "wb") as f:
                     f.write(response.content)
+                if os.path.getsize(dest_path) != item.size:
+                    self.event_logger.add(
+                        f"resfile size doesn't match: {dest_path}, re-trying..."
+                    )
+                    if retries < 3:
+                        self.download_file(item, dest_path, retries + 1)
             elif response.status_code == 404:
                 self.event_logger.add(f"404 error: {item.filename}")
                 return
@@ -315,10 +322,12 @@ class ResTree(QTreeWidget):
 
     def save_file_command(self, item, multiple=False, multiple_destination=None):
         if not multiple:
-            dest_folder = QFileDialog.getExistingDirectory(None, "Save Destination")
-            if not dest_folder:
+            dest_location, _ = QFileDialog.getSaveFileName(
+                None, "Save File", item.filename, "All Files(*.)"
+            )
+            if not dest_location:
                 return
-            out_file_path = os.path.join(dest_folder, item.filename)
+            out_file_path = dest_location
         else:
             out_file_path = multiple_destination
 
@@ -393,8 +402,10 @@ class ResTree(QTreeWidget):
             self.config = json.loads(open(CONFIG_FILE, "r").read())
             try:
                 with open(
-                    os.path.join(
-                        self.config["SharedCacheLocation"], "tq", "resfileindex.txt"
+                    os.path.normpath(
+                        os.path.join(
+                            self.config["SharedCacheLocation"], "tq", "resfileindex.txt"
+                        )
                     ),
                     "r",
                 ) as f:
@@ -412,7 +423,8 @@ class ResTree(QTreeWidget):
                 self.event_logger.add(
                     f"Took {time.time() - start:.2f}s to load resfiles"
                 )
-            except OSError:
+            except OSError as e:
+                self.event_logger.add(str(e))
                 QMessageBox.warning(
                     self, "Error", f"Invalid Shared Cache location. Check config.json"
                 )
