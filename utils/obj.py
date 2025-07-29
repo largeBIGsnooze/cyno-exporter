@@ -18,10 +18,7 @@ class Wavefront:
                     "tangent": vertex.get("tangent", []),  # unsupported
                     "normal": vertex.get("normal", []),
                     "texcoord0": vertex["texcoord0"],
-                    "indices": [
-                        {"name": i["name"], "faces": i["faces"]}
-                        for i in mesh["indices"]
-                    ],
+                    "indices": [{"name": i["name"], "faces": i["faces"]} for i in mesh["indices"]],
                 }
             )
         return data

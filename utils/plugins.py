@@ -42,6 +42,7 @@ class NvttExport(Plugins):
         dir_path = os.path.dirname(args[0])
         super().run(args[0], "-o", os.path.join(dir_path, f"{filename}.png"))
 
+
 class Ww2Ogg(Plugins):
     def __init__(self):
         super().__init__("ww2ogg", "ww2ogg.exe")

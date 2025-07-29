@@ -3,23 +3,24 @@
 import os, shutil
 
 
-def copy_folders(folder):
+def copy_folders(folder, rootFolder):
     for icon in os.listdir(folder):
         src = os.path.join(folder, icon)
-        dst = os.path.join(f"./dist/{folder}", icon)
+        dst = os.path.join(f"./dist/{rootFolder}/{folder}", icon)
         if os.path.isdir(src):
             if "__pycache__" in src:
                 continue
             os.makedirs(dst, exist_ok=True)
-            copy_folders(src)
+            copy_folders(src, rootFolder)
         else:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copy(src, dst)
 
 
-copy_folders("./icons")
-copy_folders("./tools")
-shutil.copy("./icon.ico", "./dist/icon.ico")
+os.makedirs("./dist/Cyno Exporter", exist_ok=True)
+copy_folders("./icons", "Cyno Exporter")
+copy_folders("./tools", "Cyno Exporter")
+shutil.copy("./icon.ico", "./dist/Cyno Exporter/icon.ico")
 
 a = Analysis(
     ["cyno_exporter.py"],
@@ -55,5 +56,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=["dist/icon.ico"],
+    icon=["dist/Cyno Exporter/icon.ico"],
 )

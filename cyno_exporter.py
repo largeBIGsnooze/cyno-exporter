@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 import sys, os, time, shutil, json, concurrent.futures, argparse
 import requests
+from dotenv import load_dotenv
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -29,20 +30,20 @@ from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from utils.obj import Wavefront
 from utils.plugins import Revorb, Ww2Ogg, NvttExport
 
+load_dotenv()
+
 CONFIG_FILE = "./config.json"
-VERSION = "v1.3.0"
+VERSION = "v1.4.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
     "sisi": {"name": "Singularity", "id": "SISI"},
-    "serenity": {"name": "Serenity", "id": None},
-    "duality": {"name": "Duality", "id": None},
-    "infinity": {"name": "Infinity", "id": None},
+    "serenity": {"name": "Serenity", "id": "SERENITY"},
+    "duality": {"name": "Duality", "id": "DUALITY"},
+    "infinity": {"name": "Infinity", "id": "INFINITY"},
     "sharedCache": {"name": "Local", "id": None},
 }
-STYLE_SHEET = open(
-    os.path.join(Path(__file__).parent, "style.qss"), "r", encoding="utf-8"
-).read()
+STYLE_SHEET = open(os.path.join(Path(__file__).parent, "style.qss"), "r", encoding="utf-8").read()
 
 
 class EVEDirectory(QTreeWidgetItem):
@@ -77,25 +78,32 @@ class EVEFile(QTreeWidgetItem):
         self.resfile_hash = resfile_hash
 
 
-class ResIndex:
+class ResFileIndex:
     def __init__(self, chinese_client=False, event_logger=None):
         self.chinese_client = chinese_client
         self.event_logger = event_logger
+
         if not chinese_client:
             self.binaries_url = "https://binaries.eveonline.com"
             self.resources_url = "https://resources.eveonline.com"
+        else:
+            self.chinese_url = os.environ.get("CHINESE_RESINDEX_CDN")
+            self.binaries_url = f"{os.environ.get('CHINESE_CDN')}/binaries"
+            self.resources_url = f"{os.environ.get('CHINESE_CDN')}/resources"
 
     def fetch_client(self, client, timeout=10):
-        if not self.chinese_client:
-            response = requests.get(f"{self.binaries_url}/{client}", timeout=timeout)
+        base_url = self.chinese_url if self.chinese_client else self.binaries_url
         try:
+            response = requests.get(f"{base_url}/{client}", timeout=timeout)
             if response.status_code == 200:
                 client = response.json()
                 self.event_logger.add(f"Requesting client: {response.url}")
-                if not self.is_protected(client):
-                    return self.get_build(client)
+                if not self._is_protected(client):
+                    return self._get_build(client)
                 else:
                     return None
+        except requests.exceptions.MissingSchema:
+            self.event_logger.add(f"Connection failed.")
         except Exception:
             self.event_logger.add(f"Connection failed to: {response.url}")
 
@@ -117,23 +125,19 @@ class ResIndex:
     @staticmethod
     def get_soundbankinfo(content):
         return next(
-            (
-                bnk["resfile_hash"]
-                for bnk in content
-                if "soundbanksinfo.json" in bnk["res_path"]
-            ),
+            (bnk["resfile_hash"] for bnk in content if "soundbanksinfo.json" in bnk["res_path"]),
             None,
         )
 
     def fetch_resindexfile(self, build):
-        base_url = self.binaries_url
+        base_url = self.chinese_url if self.chinese_client else self.binaries_url
         response = requests.get(f"{base_url}/eveonline_{build}.txt")
         self.event_logger.add(f"Requesting resindex: {base_url}/eveonline_{build}.txt")
         if response.status_code == 200:
             resfileindex = next(
                 (
                     resfile
-                    for resfile in ResIndex.resindexfile_object(response.text)
+                    for resfile in ResFileIndex.resindexfile_object(response.text)
                     if resfile["res_path"].startswith("resfileindex.txt")
                 ),
                 None,
@@ -143,19 +147,18 @@ class ResIndex:
 
             os.makedirs("resindex", exist_ok=True)
             resfileindex_file_path = os.path.join("resindex", resfileindex_file)
+            content = requests.get(f"{self.binaries_url}/{resfileindex['resfile_hash']}").content
+
             with open(resfileindex_file_path, "wb") as f:
-                content = requests.get(
-                    f"{self.binaries_url}/{resfileindex['resfile_hash']}"
-                ).content
                 f.write(content)
 
             return resfileindex_file
         return None
 
-    def is_protected(self, client):
+    def _is_protected(self, client):
         return bool(client["protected"])
 
-    def get_build(self, client):
+    def _get_build(self, client):
         return int(client["build"])
 
 
@@ -165,7 +168,6 @@ class ResTree(QTreeWidget):
         parent=None,
         client=None,
         chinese_client=False,
-        is_shared_cache=False,
         event_logger=None,
         shared_cache=None,
     ):
@@ -174,7 +176,7 @@ class ResTree(QTreeWidget):
         self.setHeaderLabel("res: ► ")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
-        self.itemSelectionChanged.connect(self.show_selected_item)
+        self.itemSelectionChanged.connect(self._show_selected_item)
         self.setHeaderLabels(["", "Size"])
 
         self.setColumnWidth(0, 775)
@@ -184,7 +186,6 @@ class ResTree(QTreeWidget):
         self.chinese_client = chinese_client
         self.client = client
 
-        self.is_shared_cache = is_shared_cache
         self.shared_cache = shared_cache
         self.are_resfiles_loaded = False
         self.event_logger = event_logger
@@ -192,7 +193,6 @@ class ResTree(QTreeWidget):
         self.protected_label = None
 
         self.icon_atlas = QPixmap("./icons/icons.png")
-
         try:
             self.config = json.loads(open(CONFIG_FILE, "r", encoding="utf-8").read())
         except:
@@ -203,16 +203,16 @@ class ResTree(QTreeWidget):
 
         self.show()
 
-    def show_selected_item(self):
+    def _show_selected_item(self):
         try:
+            print(f"Selected item: {self.selectedItems()[0].respath}")
             self.setHeaderLabel(
-                "res: ► "
-                + self.get_path_segments(self.selectedItems()[0]).replace("\\", " ► ")
+                "res: ► " + self._get_path_segments(self.selectedItems()[0]).replace("\\", " ► ")
             )
         except:
             pass
 
-    def get_path_segments(self, item):
+    def _get_path_segments(self, item):
         path_segments = []
         try:
             while item and item.text(0) != "res:":
@@ -224,13 +224,13 @@ class ResTree(QTreeWidget):
         except:
             return ""
 
-    def get_directory_size(self, directory):
+    def _get_directory_size(self, directory):
         total = 0
         for child in directory.items:
             if isinstance(child, EVEFile):
                 total += int(child.size)
             elif isinstance(child, EVEDirectory):
-                total += int(self.get_directory_size(child))
+                total += int(self._get_directory_size(child))
         directory.size = total
         return total
 
@@ -249,9 +249,7 @@ class ResTree(QTreeWidget):
         return files
 
     def download_file_itemless(self, resfile_hash, dest_path):
-        resindex = ResIndex(
-            chinese_client=self.chinese_client, event_logger=self.event_logger
-        )
+        resindex = ResFileIndex(chinese_client=self.chinese_client, event_logger=self.event_logger)
         try:
             url = f"{resindex.resources_url}/{resfile_hash}"
             response = requests.get(url, timeout=10)
@@ -265,9 +263,7 @@ class ResTree(QTreeWidget):
             self.event_logger.add(f"Request failed: {url}")
 
     def download_file(self, item, dest_path, retries=0):
-        resindex = ResIndex(
-            chinese_client=self.chinese_client, event_logger=self.event_logger
-        )
+        resindex = ResFileIndex(chinese_client=self.chinese_client, event_logger=self.event_logger)
         try:
             url = f"{resindex.resources_url}/{item.resfile_hash}"
             response = requests.get(url)
@@ -275,9 +271,7 @@ class ResTree(QTreeWidget):
                 with open(dest_path, "wb") as f:
                     f.write(response.content)
                 if os.path.getsize(dest_path) != item.size:
-                    self.event_logger.add(
-                        f"resfile size doesn't match: {dest_path}, re-trying..."
-                    )
+                    self.event_logger.add(f"resfile size doesn't match: {dest_path}, re-trying...")
                     if retries < 3:
                         self.download_file(item, dest_path, retries + 1)
             elif response.status_code == 404:
@@ -287,27 +281,23 @@ class ResTree(QTreeWidget):
         except:
             self.event_logger.add(f"Request failed: {url}")
 
-    def save_as_obj_command(self, item):
-        out_file = self.save_file_command(item)
+    def _save_as_obj_command(self, item):
+        out_file = self._save_file_command(item)
         if not out_file:
             return
         Wavefront().to_obj(out_file)
         self.event_logger.add(f"Obj exported: {out_file}")
 
-    def save_as_png_command(self, out_file_path):
+    def _save_as_png_command(self, out_file_path):
         NvttExport().run(out_file_path)
         os.remove(out_file_path)
 
-    def save_as_ogg_command(self, out_file_path):
+    def _save_as_ogg_command(self, out_file_path):
         stdout, wem = Ww2Ogg().run(out_file_path)
-        temp = os.path.join(
-            os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.temp"
-        )
+        temp = os.path.join(os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.temp")
 
         if stdout is not None:
-            self.event_logger.add(
-                f"Could not convert: {out_file_path}\n\n{str(stdout)}"
-            )
+            self.event_logger.add(f"Could not convert: {out_file_path}\n\n{str(stdout)}")
             return
 
         os.remove(out_file_path)
@@ -315,12 +305,10 @@ class ResTree(QTreeWidget):
         os.remove(wem)
         os.rename(
             temp,
-            os.path.join(
-                os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.ogg"
-            ),
+            os.path.join(os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.ogg"),
         )
 
-    def save_file_command(self, item, multiple=False, multiple_destination=None):
+    def _save_file_command(self, item, multiple=False, multiple_destination=None):
         if not multiple:
             dest_location, _ = QFileDialog.getSaveFileName(
                 None, "Save File", item.filename, "All Files(*.)"
@@ -331,12 +319,10 @@ class ResTree(QTreeWidget):
         else:
             out_file_path = multiple_destination
 
-        if self.is_shared_cache:
+        if self.client is None:
             folder, resfile_hash = item.resfile_hash.split("/", 1)
             shutil.copy(
-                os.path.join(
-                    self.config["SharedCacheLocation"], "ResFiles", folder, resfile_hash
-                ),
+                os.path.join(self.config["SharedCacheLocation"], "ResFiles", folder, resfile_hash),
                 out_file_path,
             )
         else:
@@ -346,35 +332,31 @@ class ResTree(QTreeWidget):
             )
 
         if out_file_path.lower().endswith(".dds"):
-            self.save_as_png_command(out_file_path)
+            self._save_as_png_command(out_file_path)
         elif out_file_path.lower().endswith(".wem"):
-            self.save_as_ogg_command(out_file_path)
+            self._save_as_ogg_command(out_file_path)
         if not multiple:
             self.event_logger.add(f"Exported resfile to: {out_file_path}")
         return out_file_path if not multiple else item.filename
 
-    def save_folder_command(self, item):
+    def _save_folder_command(self, item):
         dest_folder = QFileDialog.getExistingDirectory(None, "Select Destination")
         if not dest_folder:
             return
 
-        path_segments = self.get_path_segments(item)
+        path_segments = self._get_path_segments(item)
         files = self.copy_folder_files(item, path_segments)
 
-        loading = LoadingScreenWindow(files, True)
+        loading = LoadingScreenWindow(files, stay_on_top=True)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=15) as worker:
             futures = []
 
             for i, file in enumerate(files):
                 if isinstance(file, EVEFile):
-                    file_path = os.path.normpath(
-                        os.path.join(dest_folder, file.respath)
-                    )
+                    file_path = os.path.normpath(os.path.join(dest_folder, file.respath))
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                    futures.append(
-                        worker.submit(self.save_file_command, file, True, file_path)
-                    )
+                    futures.append(worker.submit(self._save_file_command, file, True, file_path))
 
             for future in concurrent.futures.as_completed(futures):
                 loading.label.setText(future.result())
@@ -383,6 +365,22 @@ class ResTree(QTreeWidget):
 
         self.event_logger.add(f"Exported {len(files)} resfiles to {dest_folder}")
         loading.close()
+
+    def _start_loading(self, root, resfileindex_path, bnk_path):
+        with open(resfileindex_path, "r", encoding="utf-8") as f:
+            resfileindex = ResFileIndex.resindexfile_object(f.read())
+
+        bnk_hash = ResFileIndex.get_soundbankinfo(resfileindex)
+        self.download_file_itemless(bnk_hash, bnk_path)
+
+        with open(bnk_path, "r", encoding="utf-8") as f:
+            bnk = json.load(f)
+
+        start_time = time.time()
+
+        self.event_logger.add("Loading resfiles...")
+        self._load_file_tree(root=root, resfiles=resfileindex, bankfileinfo=bnk)
+        self.event_logger.add(f"Took {time.time() - start_time:.2f}s to load resfiles")
 
     def load_resfiles(self, parent, client=None):
         self.shared_cache.setEnabled(False)
@@ -398,70 +396,37 @@ class ResTree(QTreeWidget):
         self.protected_label = QLabel("Client is protected", self)
 
         os.makedirs("resindex", exist_ok=True)
-        if self.is_shared_cache:
+
+        if self.client is None:
             self.config = json.loads(open(CONFIG_FILE, "r").read())
             try:
-                with open(
-                    os.path.normpath(
-                        os.path.join(
-                            self.config["SharedCacheLocation"], "tq", "resfileindex.txt"
-                        )
-                    ),
-                    "r",
-                ) as f:
-                    resfileindex = ResIndex.resindexfile_object(f.read())
-
-                bnk_hash = ResIndex.get_soundbankinfo(resfileindex)
-                self.download_file_itemless(
-                    bnk_hash,
-                    f"./resindex/soundbanksinfo.json",
+                shared_cache_path = os.path.join(
+                    self.config["SharedCacheLocation"], "tq", "resfileindex.txt"
                 )
-                bnk = json.loads(open("./resindex/soundbanksinfo.json", "r").read())
-                self.event_logger.add("Loading resfiles...")
-                start = time.time()
-                self.load(root=root, resfiles=resfileindex, bankfileinfo=bnk)
-                self.event_logger.add(
-                    f"Took {time.time() - start:.2f}s to load resfiles"
-                )
-            except OSError as e:
-                self.event_logger.add(str(e))
+                resfileindex_path = os.path.join(shared_cache_path, "resfileindex.txt")
+                bnk_path = "./resindex/soundbanksinfo.json"
+                self._start_loading(root, shared_cache_path, bnk_path)
+            except OSError:
                 QMessageBox.warning(
                     self, "Error", f"Invalid Shared Cache location. Check config.json"
                 )
         else:
-            resindex = ResIndex(
+            resindex = ResFileIndex(
                 chinese_client=self.chinese_client, event_logger=self.event_logger
             )
             build = resindex.fetch_client(client)
             if build is not None:
                 resfileindex_file = resindex.fetch_resindexfile(build=build)
+                resfileindex_path = os.path.join("resindex", resfileindex_file)
 
-                with open(
-                    os.path.join("resindex", resfileindex_file), "r", encoding="utf-8"
-                ) as f:
-                    resfileindex = ResIndex.resindexfile_object(f.read())
+                bnk_path = f"./resindex/{build}_soundbanksinfo.json"
 
-                bnk_hash = ResIndex.get_soundbankinfo(resfileindex)
-                self.download_file_itemless(
-                    bnk_hash,
-                    f"./resindex/{build}_soundbanksinfo.json",
-                )
-                bnk = json.loads(
-                    open(f"./resindex/{build}_soundbanksinfo.json", "r").read()
-                )
-                self.event_logger.add("Loading resfiles...")
-                start = time.time()
-                self.load(root=root, resfiles=resfileindex, bankfileinfo=bnk)
-                self.event_logger.add(
-                    f"Took {time.time() - start:.2f}s to load resfiles"
-                )
+                self._start_loading(root, resfileindex_path, bnk_path)
             else:
                 root.setHidden(True)
                 self.protected_label.setGeometry(25, 25, 300, 50)
                 self.protected_label.show()
-                self.event_logger.add(
-                    "Could not load resfiles due to client protection"
-                )
+                self.event_logger.add("Could not load resfiles due to client protection")
 
         self.shared_cache.setEnabled(True)
 
@@ -472,7 +437,7 @@ class ResTree(QTreeWidget):
             )
             dir_map[path] = dir_item
             parent.add(dir_item)
-            parent.setText(1, self.format_filesize(self.get_directory_size(parent)))
+            parent.setText(1, self._format_filesize(self._get_directory_size(parent)))
         return dir_map[path]
 
     def add_resfile_filter(self, i, name):
@@ -481,7 +446,7 @@ class ResTree(QTreeWidget):
             return True
         return False
 
-    def load(self, root, resfiles, bankfileinfo):
+    def _load_file_tree(self, root, resfiles, bankfileinfo):
         dir_map = {}
 
         loading = ProgressBar(resfiles, self)
@@ -489,67 +454,67 @@ class ResTree(QTreeWidget):
         loading_label.setGeometry(5, 795, 900, 15)
         loading_label.setStyleSheet("font-weight: bold;")
         loading_label.show()
+
         for i, resfile in enumerate(resfiles):
+            soundbank_directory = ""
             if ".wem" in resfile["res_path"]:
-                name = os.path.basename(resfile["res_path"]).split(".")[0]
-                resfiles[i]["res_path"] = next(
-                    (
-                        bank["Path"].replace("\\", "/").lower()
-                        for bank in bankfileinfo["SoundBanksInfo"]["StreamedFiles"]
-                        if name == bank["Id"]
-                    ),
-                    resfile["res_path"],
-                )
+                search_id = os.path.basename(resfile["res_path"]).split(".")[0]
+                if "StreamedFiles" in bankfileinfo["SoundBanksInfo"]:
+                    for bank in bankfileinfo["SoundBanksInfo"]["StreamedFiles"]:
+                        if search_id == bank["Id"]:
+                            resfiles[i]["res_path"] = bank["Path"].replace("\\", "/").lower()
+                        else:
+                            resfiles[i]["res_path"] = resfile["res_path"]
+                else:
+                    for bank in bankfileinfo["SoundBanksInfo"]["SoundBanks"]:
+                        if "Media" in bank:
+                            for mediaFile in bank["Media"]:
+                                if search_id == mediaFile["Id"]:
+                                    soundbank_directory = bank["ShortName"]
+                                    resfiles[i]["res_path"] = mediaFile["CachePath"].lower()
+                                else:
+                                    resfiles[i]["res_path"] = resfile["res_path"]
 
             path_segments = resfile["res_path"].split("/")
             parent = root
-
             full_path = ""
+
+            file_name = path_segments[-1]
+            ext = os.path.splitext(file_name)
+            icon = self.set_icon_from_extension(ext[1])
+
+            # filter junk
+            if self.add_resfile_filter(i, file_name):
+                continue
+
+            if soundbank_directory:
+                parent = self.add_directory("soundbanks", root, full_path, dir_map)
+            if resfile["res_path"].lower().startswith("sfx") and soundbank_directory:
+                full_path = os.path.join(full_path, soundbank_directory)
+                parent = self.add_directory(soundbank_directory, parent, full_path, dir_map)
 
             for segment in path_segments[:-1]:
                 full_path = os.path.join(full_path, segment)
                 parent = self.add_directory(segment, parent, full_path, dir_map)
 
-            name = path_segments[-1]
-            ext = os.path.splitext(name)
+            file_item = EVEFile(
+                parent,
+                text=file_name,
+                filename=file_name,
+                size=resfile["size"],
+                respath=resfile["res_path"],
+                resfile_hash=resfile["resfile_hash"],
+                icon=icon,
+            )
+            file_size = int(resfile["size"])
+            file_item.setText(1, self._format_filesize(file_size))
+            parent.add(file_item)
 
-            # filter junk
-            if self.add_resfile_filter(i, name):
-                continue
-
-            icon = self.set_icon_from_extension(ext[1])
-
-            if resfile["res_path"].lower().startswith("sfx"):
-                full_path = ""
-                for segment in path_segments[:-1]:
-                    full_path = os.path.join(full_path, segment)
-                    parent = self.add_directory(segment, parent, full_path, dir_map)
-
-                file_item = EVEFile(
-                    parent,
-                    text=name,
-                    filename=name,
-                    size=resfile["size"],
-                    respath=resfile["res_path"],
-                    resfile_hash=resfile["resfile_hash"],
-                    icon=icon,
-                )
-                file_item.setText(1, self.format_filesize(int(resfile["size"])))
-                parent.add(file_item)
-                parent.setText(1, self.format_filesize(self.get_directory_size(parent)))
-            else:
-                file_item = EVEFile(
-                    parent,
-                    text=name,
-                    filename=name,
-                    size=resfile["size"],
-                    respath=resfile["res_path"],
-                    resfile_hash=resfile["resfile_hash"],
-                    icon=icon,
-                )
-                file_item.setText(1, self.format_filesize(int(resfile["size"])))
-                parent.add(file_item)
-                parent.setText(1, self.format_filesize(self.get_directory_size(parent)))
+            current = parent
+            while current:
+                current.size = int(current.size) + file_size
+                current.setText(1, self._format_filesize(current.size))
+                current = current.parent()
 
             loading.setValue(i + 1)
             QApplication.processEvents()
@@ -574,7 +539,7 @@ class ResTree(QTreeWidget):
         else:
             return QIcon(self.icon_atlas.copy(161, 0, 15, 16))
 
-    def format_filesize(self, size):
+    def _format_filesize(self, size):
         size = float(size)
         for unit in ["KB", "MB", "GB"]:
             size /= 1024
@@ -590,9 +555,7 @@ class ResTree(QTreeWidget):
                 save_folder_action,
                 save_file_action,
                 export_obj_action,
-                export_png_action,
-                export_ogg_action,
-            ) = (None, None, None, None, None)
+            ) = (None, None, None)
 
             if isinstance(item, EVEDirectory) and item.text(0) != "res:":
                 save_folder_action = menu.addAction("Save folder")
@@ -609,11 +572,11 @@ class ResTree(QTreeWidget):
                 return
 
             if action == save_folder_action:
-                self.save_folder_command(item)
+                self._save_folder_command(item)
             elif action == save_file_action:
-                self.save_file_command(item)
+                self._save_file_command(item)
             elif action == export_obj_action:
-                self.save_as_obj_command(item)
+                self._save_as_obj_command(item)
 
 
 class ContextMenuFilter(QObject):
@@ -636,9 +599,7 @@ class CynoExporterWindow(QMainWindow):
 
     def init(self):
 
-        self.move(
-            QApplication.primaryScreen().geometry().center() - self.rect().center()
-        )
+        self.move(QApplication.primaryScreen().geometry().center() - self.rect().center())
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -655,7 +616,6 @@ class CynoExporterWindow(QMainWindow):
 
         self.shared_cache_tq = ResTree(
             self,
-            is_shared_cache=True,
             event_logger=self.event_logger,
             shared_cache=self.set_shared_cache_action,
         )
@@ -671,10 +631,26 @@ class CynoExporterWindow(QMainWindow):
             event_logger=self.event_logger,
             shared_cache=self.set_shared_cache_action,
         )
+        self.serenity = ResTree(
+            self,
+            f"eveclient_{CLIENTS['serenity']['id']}.json",
+            chinese_client=True,
+            event_logger=self.event_logger,
+            shared_cache=self.set_shared_cache_action,
+        )
+        self.infinity = ResTree(
+            self,
+            f"eveclient_{CLIENTS['infinity']['id']}.json",
+            chinese_client=True,
+            event_logger=self.event_logger,
+            shared_cache=self.set_shared_cache_action,
+        )
 
         self.tab_widget.addTab(self.shared_cache_tq, CLIENTS["sharedCache"]["name"])
         self.tab_widget.addTab(self.tranquility, CLIENTS["tq"]["name"])
         self.tab_widget.addTab(self.singularity, CLIENTS["sisi"]["name"])
+        self.tab_widget.addTab(self.serenity, CLIENTS["serenity"]["name"])
+        self.tab_widget.addTab(self.infinity, CLIENTS["infinity"]["name"])
 
         self.menu_bar = QMenuBar()
         self.setMenuBar(self.menu_bar)
@@ -697,9 +673,7 @@ class CynoExporterWindow(QMainWindow):
         main_layout.addWidget(self.tab_widget)
 
     def set_shared_cache(self):
-        folder = QFileDialog.getExistingDirectory(
-            None, "Path to EVE's SharedCache folder"
-        )
+        folder = QFileDialog.getExistingDirectory(None, "Path to EVE's SharedCache folder")
         if not folder:
             return
         with open("./config.json", "w", encoding="utf-8") as f:
@@ -707,9 +681,7 @@ class CynoExporterWindow(QMainWindow):
 
         self.tab_widget.tabBar().setEnabled(False)
         self.shared_cache_tq.are_resfiles_loaded = False
-        self.shared_cache_tq.load_resfiles(
-            self.shared_cache_tq, self.shared_cache_tq.client
-        )
+        self.shared_cache_tq.load_resfiles(self.shared_cache_tq, self.shared_cache_tq.client)
         self.tab_widget.tabBar().setEnabled(True)
 
     def closeEvent(self, event):
@@ -725,7 +697,10 @@ class CynoExporterWindow(QMainWindow):
             self.tranquility.load_resfiles(self.tranquility, self.tranquility.client)
         elif i == 2 and not self.singularity.are_resfiles_loaded:
             self.singularity.load_resfiles(self.singularity, self.singularity.client)
-        # more servers to be added
+        elif i == 3 and not self.serenity.are_resfiles_loaded:
+            self.serenity.load_resfiles(self.serenity, self.serenity.client)
+        elif i == 4 and not self.infinity.are_resfiles_loaded:
+            self.infinity.load_resfiles(self.infinity, self.infinity.client)
 
         self.tab_widget.tabBar().setEnabled(True)
 
@@ -734,9 +709,7 @@ class DialogPanel(QDialog):
     def __init__(self, parent, title):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setWindowFlags(
-            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
-        )
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
 
 
@@ -748,9 +721,7 @@ class EventLogger(QObject):
         self.log_items = []
 
     def add(self, message):
-        self.log_items.append(
-            {"time": datetime.now().strftime("%H:%M:%S"), "message": message}
-        )
+        self.log_items.append({"time": datetime.now().strftime("%H:%M:%S"), "message": message})
         self.on_update.emit()
 
 
@@ -763,9 +734,7 @@ class LogsDialogPanel(DialogPanel):
         self.logs_widget.header().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
 
         self.setMinimumWidth(400)
-        self.logs_widget.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
+        self.logs_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.logs_widget, stretch=1)
@@ -797,9 +766,7 @@ class LicenseAgreementDialog(QDialog):
         legal_disclaimer = QTextEdit(self)
         legal_disclaimer.setPlainText(LICENSE_TEXT)
         legal_disclaimer.setStyleSheet("font-size: 11px;")
-        legal_disclaimer.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
+        legal_disclaimer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         accept_button = QPushButton("I accept", self)
         accept_button.clicked.connect(self.accept)
@@ -907,14 +874,10 @@ class LoadingScreenWindow(QProgressDialog):
         self.setMaximum(len(files))
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setFixedSize(300, 60)
-        self.move(
-            QApplication.primaryScreen().geometry().center() - self.rect().center()
-        )
+        self.move(QApplication.primaryScreen().geometry().center() - self.rect().center())
         self.setStyleSheet(STYLE_SHEET)
         self.setWindowModality(
-            Qt.WindowModality.WindowModal
-            if not stay_on_top
-            else Qt.WindowModality.ApplicationModal
+            Qt.WindowModality.WindowModal if not stay_on_top else Qt.WindowModality.ApplicationModal
         )
         self.show()
         self.raise_()
@@ -935,9 +898,7 @@ if __name__ == "__main__":
     def show():
         window.show()
         window.tab_widget.tabBar().setEnabled(False)
-        window.shared_cache_tq.load_resfiles(
-            window.shared_cache_tq, window.shared_cache_tq.client
-        )
+        window.shared_cache_tq.load_resfiles(window.shared_cache_tq, window.shared_cache_tq.client)
         window.tab_widget.tabBar().setEnabled(True)
         sys.exit(app.exec())
 

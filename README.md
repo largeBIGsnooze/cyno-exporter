@@ -39,7 +39,7 @@ pip install pyinstaller
 ```
 2. Compile to binary executable
 ```sh
-pyinstaller cyno_exporter.spec
+pyinstaller cyno_exporter.spec --distpath "dist/Cyno Exporter"
 ```
 3. You will see the executable in the dist directory
 
