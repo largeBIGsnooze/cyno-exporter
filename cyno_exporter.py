@@ -29,11 +29,12 @@ from PyQt6.QtGui import QIcon, QPixmap, QAction
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from utils.obj import Wavefront
 from utils.plugins import Revorb, Ww2Ogg, NvttExport
+from fuzzwork import FuzzWork
 
 load_dotenv()
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.5.0"
+VERSION = "v1.6.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
@@ -44,7 +45,7 @@ CLIENTS = {
     "sharedCache": {"name": "Local", "id": None},
 }
 STYLE_SHEET = open(os.path.join(Path(__file__).parent, "style.qss"), "r", encoding="utf-8").read()
-
+FUZZWORK = FuzzWork().get_latest("eveGraphics.csv")
 
 class EVEDirectory(QTreeWidgetItem):
     def __init__(self, parent, text="", icon=None):
@@ -349,7 +350,7 @@ class ResTree(QTreeWidget):
 
         loading = LoadingScreenWindow(files, stay_on_top=True)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as worker:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as worker:
             futures = []
 
             for i, file in enumerate(files):
@@ -497,10 +498,11 @@ class ResTree(QTreeWidget):
                 full_path = os.path.join(full_path, segment)
                 parent = self.add_directory(segment, parent, full_path, dir_map)
 
+            description = FUZZWORK["eveGraphics"].get(file_name, file_name)
             file_item = EVEFile(
                 parent,
-                text=file_name,
-                filename=file_name,
+                text=description,
+                filename=description,
                 size=resfile["size"],
                 respath=resfile["res_path"],
                 resfile_hash=resfile["resfile_hash"],
@@ -607,7 +609,6 @@ class CynoExporterWindow(QMainWindow):
         self.tab_widget = QTabWidget()
 
         self.setStyleSheet(STYLE_SHEET)
-
         self.event_logger = EventLogger()
 
         self.set_shared_cache_action = QAction("&Set Shared Cache", self)
