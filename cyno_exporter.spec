@@ -21,6 +21,7 @@ os.makedirs("./dist/Cyno Exporter", exist_ok=True)
 copy_folders("./icons", "Cyno Exporter")
 copy_folders("./tools", "Cyno Exporter")
 shutil.copy("./icon.ico", "./dist/Cyno Exporter/icon.ico")
+shutil.copy("./db.json", "./dist/Cyno Exporter/db.json")
 
 a = Analysis(
     ["cyno_exporter.py"],

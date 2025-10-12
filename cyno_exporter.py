@@ -14,12 +14,12 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QWidget,
     QDialog,
+    QLineEdit,
     QVBoxLayout,
     QTextEdit,
     QHeaderView,
     QLabel,
     QMenuBar,
-    QHBoxLayout,
     QSizePolicy,
     QMessageBox,
     QPushButton,
@@ -29,12 +29,11 @@ from PyQt6.QtGui import QIcon, QPixmap, QAction
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from utils.obj import Wavefront
 from utils.plugins import Revorb, Ww2Ogg, NvttExport
-from fuzzwork import FuzzWork
 
 load_dotenv()
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.6.0"
+VERSION = "v1.7.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
@@ -44,8 +43,11 @@ CLIENTS = {
     "infinity": {"name": "Infinity", "id": "INFINITY"},
     "sharedCache": {"name": "Local", "id": None},
 }
-STYLE_SHEET = open(os.path.join(Path(__file__).parent, "style.qss"), "r", encoding="utf-8").read()
-FUZZWORK = FuzzWork().get_latest("eveGraphics.csv")
+STYLE_SHEET = open(
+    os.path.join(Path(__file__).parent, "style.qss"), "r", encoding="utf-8"
+).read()
+DB = json.loads(open("./db.json", "r").read())
+
 
 class EVEDirectory(QTreeWidgetItem):
     def __init__(self, parent, text="", icon=None):
@@ -77,6 +79,7 @@ class EVEFile(QTreeWidgetItem):
         self.size = int(size)
         self.respath = respath
         self.resfile_hash = resfile_hash
+        self.setToolTip(0, filename)
 
 
 class ResFileIndex:
@@ -126,7 +129,11 @@ class ResFileIndex:
     @staticmethod
     def get_soundbankinfo(content):
         return next(
-            (bnk["resfile_hash"] for bnk in content if "soundbanksinfo.json" in bnk["res_path"]),
+            (
+                bnk["resfile_hash"]
+                for bnk in content
+                if "soundbanksinfo.json" in bnk["res_path"]
+            ),
             None,
         )
 
@@ -148,7 +155,9 @@ class ResFileIndex:
 
             os.makedirs("resindex", exist_ok=True)
             resfileindex_file_path = os.path.join("resindex", resfileindex_file)
-            content = requests.get(f"{self.binaries_url}/{resfileindex['resfile_hash']}").content
+            content = requests.get(
+                f"{self.binaries_url}/{resfileindex['resfile_hash']}"
+            ).content
 
             with open(resfileindex_file_path, "wb") as f:
                 f.write(content)
@@ -208,7 +217,7 @@ class ResTree(QTreeWidget):
         try:
             print(f"Selected item: {self.selectedItems()[0].respath}")
             self.setHeaderLabel(
-                "res: ► " + self._get_path_segments(self.selectedItems()[0]).replace("\\", " ► ")
+                "res: ► " + self.selectedItems()[0].respath.replace("/", " ► ")
             )
         except:
             pass
@@ -217,9 +226,7 @@ class ResTree(QTreeWidget):
         path_segments = []
         try:
             while item and item.text(0) != "res:":
-                path_segments.insert(
-                    0, item.text(0) if isinstance(item, EVEDirectory) else item.filename
-                )
+                path_segments.insert(0, item.text(0))
                 item = item.parent()
             return os.path.join(*path_segments)
         except:
@@ -250,7 +257,9 @@ class ResTree(QTreeWidget):
         return files
 
     def download_file_itemless(self, resfile_hash, dest_path):
-        resindex = ResFileIndex(chinese_client=self.chinese_client, event_logger=self.event_logger)
+        resindex = ResFileIndex(
+            chinese_client=self.chinese_client, event_logger=self.event_logger
+        )
         try:
             url = f"{resindex.resources_url}/{resfile_hash}"
             response = requests.get(url, timeout=10)
@@ -264,7 +273,9 @@ class ResTree(QTreeWidget):
             self.event_logger.add(f"Request failed: {url}")
 
     def download_file(self, item, dest_path, retries=0):
-        resindex = ResFileIndex(chinese_client=self.chinese_client, event_logger=self.event_logger)
+        resindex = ResFileIndex(
+            chinese_client=self.chinese_client, event_logger=self.event_logger
+        )
         try:
             url = f"{resindex.resources_url}/{item.resfile_hash}"
             response = requests.get(url)
@@ -272,7 +283,9 @@ class ResTree(QTreeWidget):
                 with open(dest_path, "wb") as f:
                     f.write(response.content)
                 if os.path.getsize(dest_path) != item.size:
-                    self.event_logger.add(f"resfile size doesn't match: {dest_path}, re-trying...")
+                    self.event_logger.add(
+                        f"resfile size doesn't match: {dest_path}, re-trying..."
+                    )
                     if retries < 3:
                         self.download_file(item, dest_path, retries + 1)
             elif response.status_code == 404:
@@ -295,10 +308,14 @@ class ResTree(QTreeWidget):
 
     def _save_as_ogg_command(self, out_file_path):
         stdout, wem = Ww2Ogg().run(out_file_path)
-        temp = os.path.join(os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.temp")
+        temp = os.path.join(
+            os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.temp"
+        )
 
         if stdout is not None:
-            self.event_logger.add(f"Could not convert: {out_file_path}\n\n{str(stdout)}")
+            self.event_logger.add(
+                f"Could not convert: {out_file_path}\n\n{str(stdout)}"
+            )
             return
 
         os.remove(out_file_path)
@@ -306,13 +323,15 @@ class ResTree(QTreeWidget):
         os.remove(wem)
         os.rename(
             temp,
-            os.path.join(os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.ogg"),
+            os.path.join(
+                os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.ogg"
+            ),
         )
 
     def _save_file_command(self, item, multiple=False, multiple_destination=None):
         if not multiple:
             dest_location, _ = QFileDialog.getSaveFileName(
-                None, "Save File", item.filename, "All Files(*.)"
+                None, "Save File", item.text(0), "All Files(*.)"
             )
             if not dest_location:
                 return
@@ -323,7 +342,9 @@ class ResTree(QTreeWidget):
         if self.client is None:
             folder, resfile_hash = item.resfile_hash.split("/", 1)
             shutil.copy(
-                os.path.join(self.config["SharedCacheLocation"], "ResFiles", folder, resfile_hash),
+                os.path.join(
+                    self.config["SharedCacheLocation"], "ResFiles", folder, resfile_hash
+                ),
                 out_file_path,
             )
         else:
@@ -355,9 +376,13 @@ class ResTree(QTreeWidget):
 
             for i, file in enumerate(files):
                 if isinstance(file, EVEFile):
-                    file_path = os.path.normpath(os.path.join(dest_folder, file.respath))
+                    file_path = os.path.normpath(
+                        os.path.join(dest_folder, file.respath)
+                    )
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                    futures.append(worker.submit(self._save_file_command, file, True, file_path))
+                    futures.append(
+                        worker.submit(self._save_file_command, file, True, file_path)
+                    )
 
             for future in concurrent.futures.as_completed(futures):
                 loading.label.setText(future.result())
@@ -427,7 +452,9 @@ class ResTree(QTreeWidget):
                 root.setHidden(True)
                 self.protected_label.setGeometry(25, 25, 300, 50)
                 self.protected_label.show()
-                self.event_logger.add("Could not load resfiles due to client protection")
+                self.event_logger.add(
+                    "Could not load resfiles due to client protection"
+                )
 
         self.shared_cache.setEnabled(True)
 
@@ -451,10 +478,10 @@ class ResTree(QTreeWidget):
         dir_map = {}
 
         loading = ProgressBar(resfiles, self)
-        loading_label = QLabel("Building tree...", self)
-        loading_label.setGeometry(5, 795, 900, 15)
-        loading_label.setStyleSheet("font-weight: bold;")
-        loading_label.show()
+        # loading_label = QLabel("Building tree...", self)
+        # loading_label.setGeometry(5, 770, 900, 15)
+        # loading_label.setStyleSheet("font-weight: bold;")
+        # loading_label.show()
 
         for i, resfile in enumerate(resfiles):
             soundbank_directory = ""
@@ -463,7 +490,9 @@ class ResTree(QTreeWidget):
                 if "StreamedFiles" in bankfileinfo["SoundBanksInfo"]:
                     for bank in bankfileinfo["SoundBanksInfo"]["StreamedFiles"]:
                         if search_id == bank["Id"]:
-                            resfiles[i]["res_path"] = bank["Path"].replace("\\", "/").lower()
+                            resfiles[i]["res_path"] = (
+                                bank["Path"].replace("\\", "/").lower()
+                            )
                         else:
                             resfiles[i]["res_path"] = resfile["res_path"]
                 else:
@@ -472,7 +501,9 @@ class ResTree(QTreeWidget):
                             for mediaFile in bank["Media"]:
                                 if search_id == mediaFile["Id"]:
                                     soundbank_directory = bank["ShortName"]
-                                    resfiles[i]["res_path"] = mediaFile["CachePath"].lower()
+                                    resfiles[i]["res_path"] = mediaFile[
+                                        "CachePath"
+                                    ].lower()
                                 else:
                                     resfiles[i]["res_path"] = resfile["res_path"]
 
@@ -492,16 +523,18 @@ class ResTree(QTreeWidget):
                 parent = self.add_directory("soundbanks", root, full_path, dir_map)
             if resfile["res_path"].lower().startswith("sfx") and soundbank_directory:
                 full_path = os.path.join(full_path, soundbank_directory)
-                parent = self.add_directory(soundbank_directory, parent, full_path, dir_map)
+                parent = self.add_directory(
+                    soundbank_directory, parent, full_path, dir_map
+                )
 
             for segment in path_segments[:-1]:
                 full_path = os.path.join(full_path, segment)
                 parent = self.add_directory(segment, parent, full_path, dir_map)
 
-            description = FUZZWORK["eveGraphics"].get(file_name, file_name)
+            description = DB.get(file_name, file_name)
             file_item = EVEFile(
                 parent,
-                text=description,
+                text=file_name,
                 filename=description,
                 size=resfile["size"],
                 respath=resfile["res_path"],
@@ -522,7 +555,7 @@ class ResTree(QTreeWidget):
             QApplication.processEvents()
 
         loading.close()
-        loading_label.close()
+        # loading_label.close()
         self.are_resfiles_loaded = True
 
     def set_icon_from_extension(self, ext):
@@ -601,11 +634,13 @@ class CynoExporterWindow(QMainWindow):
 
     def init(self):
 
-        self.move(QApplication.primaryScreen().geometry().center() - self.rect().center())
+        self.move(
+            QApplication.primaryScreen().geometry().center() - self.rect().center()
+        )
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
         self.tab_widget = QTabWidget()
 
         self.setStyleSheet(STYLE_SHEET)
@@ -671,10 +706,81 @@ class CynoExporterWindow(QMainWindow):
 
         self.tab_widget.currentChanged.connect(self.on_tab_change)
 
+        self.text_box = QLineEdit()
+        self.text_box.setPlaceholderText("Search... ex: af3_t1.gr2, Punisher")
+        self.text_box.textChanged.connect(self._search)
+        self.text_box.returnPressed.connect(self._next_search_item)
+        self.search_results = []
+        self.search_index = -1
+
+        self.search_label = QLabel("")
+        self.search_label.setStyleSheet("font-weight: bold;")
+
         main_layout.addWidget(self.tab_widget)
+        main_layout.addWidget(self.text_box)
+        main_layout.addWidget(self.search_label)
+
+    def _get_searches(self, item, search_str):
+        results = []
+        if isinstance(item, EVEFile) and (
+            search_str in item.filename.lower() or search_str in item.text(0).lower()
+        ):
+            results.append(item)
+
+        for i in range(item.childCount()):
+            results.extend(self._get_searches(item.child(i), search_str))
+
+        return results
+
+    def _search(self, search_str):
+        tree = self.tab_widget.currentWidget()
+        self.search_label.setText("")
+        if not isinstance(tree, ResTree):
+            return
+
+        self.search_results.clear()
+        self.search_index = -1
+
+        if not search_str:
+            tree.collapseAll()
+            return
+
+        root = tree.topLevelItem(0)
+        if root:
+            self.search_results = self._get_searches(root, search_str.lower())
+
+        if self.search_results:
+            self.search_index = 0
+            self._select_search_item(tree)
+        else:
+            tree.clearSelection()
+            self.search_index = -1
+            self.search_label.setText("")
+
+    def _next_search_item(self):
+        tree = self.tab_widget.currentWidget()
+        if not self.search_results:
+            self._search(self.text_box.text())
+            return
+        self.search_index = (self.search_index + 1) % len(self.search_results)
+        self._select_search_item(tree)
+
+    def _select_search_item(self, tree):
+        item = self.search_results[self.search_index]
+        parent = item.parent()
+        while parent:
+            tree.expandItem(parent)
+            parent = parent.parent()
+        tree.setCurrentItem(item)
+        tree.scrollToItem(item, QTreeWidget.ScrollHint.PositionAtCenter)
+        self.search_label.setText(
+            f"{self.search_index + 1} of {len(self.search_results)}"
+        )
 
     def set_shared_cache(self):
-        folder = QFileDialog.getExistingDirectory(None, "Path to EVE's SharedCache folder")
+        folder = QFileDialog.getExistingDirectory(
+            None, "Path to EVE's SharedCache folder"
+        )
         if not folder:
             return
         with open("./config.json", "w", encoding="utf-8") as f:
@@ -682,7 +788,9 @@ class CynoExporterWindow(QMainWindow):
 
         self.tab_widget.tabBar().setEnabled(False)
         self.shared_cache_tq.are_resfiles_loaded = False
-        self.shared_cache_tq.load_resfiles(self.shared_cache_tq, self.shared_cache_tq.client)
+        self.shared_cache_tq.load_resfiles(
+            self.shared_cache_tq, self.shared_cache_tq.client
+        )
         self.tab_widget.tabBar().setEnabled(True)
 
     def closeEvent(self, event):
@@ -710,7 +818,9 @@ class DialogPanel(QDialog):
     def __init__(self, parent, title):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
+        )
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
 
 
@@ -722,7 +832,9 @@ class EventLogger(QObject):
         self.log_items = []
 
     def add(self, message):
-        self.log_items.append({"time": datetime.now().strftime("%H:%M:%S"), "message": message})
+        self.log_items.append(
+            {"time": datetime.now().strftime("%H:%M:%S"), "message": message}
+        )
         self.on_update.emit()
 
 
@@ -735,7 +847,9 @@ class LogsDialogPanel(DialogPanel):
         self.logs_widget.header().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
 
         self.setMinimumWidth(400)
-        self.logs_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.logs_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.logs_widget, stretch=1)
@@ -767,7 +881,9 @@ class LicenseAgreementDialog(QDialog):
         legal_disclaimer = QTextEdit(self)
         legal_disclaimer.setPlainText(LICENSE_TEXT)
         legal_disclaimer.setStyleSheet("font-size: 11px;")
-        legal_disclaimer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        legal_disclaimer.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
 
         accept_button = QPushButton("I accept", self)
         accept_button.clicked.connect(self.accept)
@@ -853,7 +969,7 @@ class AboutDialogPanel(DialogPanel):
 class ProgressBar(QProgressBar):
     def __init__(self, files, parent):
         super().__init__(parent)
-        self.setGeometry(0, 815, 900, 15)
+        self.setGeometry(0, 770, 900, 15)
         self.setStyleSheet("border-top: 5px solid #242424;")
         self.setValue(0)
         self.setMaximum(len(files))
@@ -875,10 +991,14 @@ class LoadingScreenWindow(QProgressDialog):
         self.setMaximum(len(files))
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setFixedSize(300, 60)
-        self.move(QApplication.primaryScreen().geometry().center() - self.rect().center())
+        self.move(
+            QApplication.primaryScreen().geometry().center() - self.rect().center()
+        )
         self.setStyleSheet(STYLE_SHEET)
         self.setWindowModality(
-            Qt.WindowModality.WindowModal if not stay_on_top else Qt.WindowModality.ApplicationModal
+            Qt.WindowModality.WindowModal
+            if not stay_on_top
+            else Qt.WindowModality.ApplicationModal
         )
         self.show()
         self.raise_()
@@ -899,7 +1019,9 @@ if __name__ == "__main__":
     def show():
         window.show()
         window.tab_widget.tabBar().setEnabled(False)
-        window.shared_cache_tq.load_resfiles(window.shared_cache_tq, window.shared_cache_tq.client)
+        window.shared_cache_tq.load_resfiles(
+            window.shared_cache_tq, window.shared_cache_tq.client
+        )
         window.tab_widget.tabBar().setEnabled(True)
         sys.exit(app.exec())
 
