@@ -33,7 +33,7 @@ from utils.plugins import Revorb, Ww2Ogg, NvttExport
 load_dotenv()
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.7.0"
+VERSION = "v1.7.1"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
