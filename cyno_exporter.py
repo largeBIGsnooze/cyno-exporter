@@ -596,7 +596,7 @@ class ResTree(QTreeWidget):
                 save_folder_action = menu.addAction("Save folder")
             elif isinstance(item, EVEFile):
                 save_file_action = menu.addAction("Save file")
-                if item.filename.endswith(".gr2"):
+                if item.text(0).endswith(".gr2"):
                     menu.addSeparator()
                     export_obj_action = menu.addAction("Export as .obj")
 
