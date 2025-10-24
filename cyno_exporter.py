@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QTabWidget,
 )
-from PyQt6.QtGui import QIcon, QPixmap, QAction
+from PyQt6.QtGui import QIcon, QPixmap, QAction, QKeySequence, QShortcut
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from utils.obj import Wavefront
 from utils.plugins import Revorb, Ww2Ogg, NvttExport
@@ -33,7 +33,7 @@ from utils.plugins import Revorb, Ww2Ogg, NvttExport
 load_dotenv()
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.7.1"
+VERSION = "v1.8.1"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
@@ -302,7 +302,7 @@ class ResTree(QTreeWidget):
         Wavefront().to_obj(out_file)
         self.event_logger.add(f"Obj exported: {out_file}")
 
-    def _save_as_png_command(self, out_file_path):
+    def _save_as_png(self, out_file_path):
         NvttExport().run(out_file_path)
         os.remove(out_file_path)
 
@@ -328,7 +328,7 @@ class ResTree(QTreeWidget):
             ),
         )
 
-    def _save_file_command(self, item, multiple=False, multiple_destination=None):
+    def _save_file_command(self, item, multiple=False, multiple_destination=None, convert_dds=False):
         if not multiple:
             dest_location, _ = QFileDialog.getSaveFileName(
                 None, "Save File", item.text(0), "All Files(*.)"
@@ -353,15 +353,15 @@ class ResTree(QTreeWidget):
                 dest_path=out_file_path,
             )
 
-        if out_file_path.lower().endswith(".dds"):
-            self._save_as_png_command(out_file_path)
-        elif out_file_path.lower().endswith(".wem"):
+        if convert_dds and out_file_path.lower().endswith(".dds"):
+            self._save_as_png(out_file_path)
+        if out_file_path.lower().endswith(".wem"):
             self._save_as_ogg_command(out_file_path)
         if not multiple:
             self.event_logger.add(f"Exported resfile to: {out_file_path}")
         return out_file_path if not multiple else item.filename
 
-    def _save_folder_command(self, item):
+    def _save_folder_command(self, item, convert_dds=False):
         dest_folder = QFileDialog.getExistingDirectory(None, "Select Destination")
         if not dest_folder:
             return
@@ -381,7 +381,7 @@ class ResTree(QTreeWidget):
                     )
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
                     futures.append(
-                        worker.submit(self._save_file_command, file, True, file_path)
+                        worker.submit(self._save_file_command, file, True, file_path, convert_dds)
                     )
 
             for future in concurrent.futures.as_completed(futures):
@@ -586,32 +586,32 @@ class ResTree(QTreeWidget):
         if item:
             menu = QMenu(self)
 
-            (
-                save_folder_action,
-                save_file_action,
-                export_obj_action,
-            ) = (None, None, None)
-
             if isinstance(item, EVEDirectory) and item.text(0) != "res:":
-                save_folder_action = menu.addAction("Save folder")
+                save_folder_action = menu.addAction("Save folder" )
+                save_folder_action.triggered.connect(lambda: self._save_folder_command(item))
+                menu.addSeparator()
+                save_folder_and_convert_dds_action = menu.addAction("Save folder | convert dds -> png")
+                save_folder_and_convert_dds_action.triggered.connect(lambda: self._save_folder_command(item, convert_dds=True))
             elif isinstance(item, EVEFile):
-                save_file_action = menu.addAction("Save file")
+                sub_menu = QMenu("Export...", menu)
+                sub_menu.installEventFilter(ContextMenuFilter(sub_menu))
+                menu.addMenu(sub_menu)
+                save_file_action = sub_menu.addAction("Save file")
+                save_file_action.triggered.connect(lambda: self._save_file_command(item))
+                sub_menu.addSeparator()
                 if item.text(0).endswith(".gr2"):
-                    menu.addSeparator()
-                    export_obj_action = menu.addAction("Export as .obj")
+                    sub_menu.addSeparator()
+                    export_obj_action = sub_menu.addAction("Save as .obj")
+                    export_obj_action.triggered.connect(lambda: self._save_as_obj_command(item))
+                elif item.text(0).endswith(".dds"):
+                    sub_menu.addSeparator()
+                    export_png_action = sub_menu.addAction("Save as .png")
+                    export_png_action.triggered.connect(lambda: self._save_as_png(self._save_file_command(item)))
+
+                menu.addAction(f"{item.filename}").setEnabled(False)
 
             menu.installEventFilter(ContextMenuFilter(menu))
-            action = menu.exec(self.mapToGlobal(point))
-
-            if action is None:
-                return
-
-            if action == save_folder_action:
-                self._save_folder_command(item)
-            elif action == save_file_action:
-                self._save_file_command(item)
-            elif action == export_obj_action:
-                self._save_as_obj_command(item)
+            menu.popup(self.viewport().mapToGlobal(point))
 
 
 class ContextMenuFilter(QObject):
@@ -716,9 +716,15 @@ class CynoExporterWindow(QMainWindow):
         self.search_label = QLabel("")
         self.search_label.setStyleSheet("font-weight: bold;")
 
+        search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        search_shortcut.activated.connect(self._search_shortcut)
+
         main_layout.addWidget(self.tab_widget)
         main_layout.addWidget(self.text_box)
         main_layout.addWidget(self.search_label)
+
+    def _search_shortcut(self):
+        self.text_box.setFocus()
 
     def _get_searches(self, item, search_str):
         results = []

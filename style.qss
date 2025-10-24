@@ -73,6 +73,17 @@ QMenu::item:selected {
     background-color: #0664c3;
 }
 
+
+QMenu::item:disabled {
+    color: #8f8f8f;
+    font-size: 10px;
+}
+
+QMenu::item:disabled:selected {
+    background-color: transparent;
+    color: #8f8f8f;
+}
+
 QLabel {
     color: #c0c0c0;
     background-color: transparent;
@@ -82,8 +93,8 @@ QLineEdit,
 QComboBox,
 QSpinBox,
 QDoubleSpinBox {
-    color: #c0c0c0;
-    background-color: black;
+    color: #d1d1cf;
+    background-color: #101010;
     height: 20px;
     padding-left: 6px;
     border-radius: 3px;
@@ -233,7 +244,7 @@ QCheckBox::indicator:checked {
 QTableView,
 QTreeView,
 QListView {
-    background-color: #151515;
+    background-color: #101010;
 }
 
 QTableView::item,
