@@ -26,14 +26,24 @@ from PyQt6.QtWidgets import (
     QTabWidget,
 )
 from PyQt6.QtGui import QIcon, QPixmap, QAction, QKeySequence, QShortcut
-from PyQt6.QtCore import Qt, QObject, pyqtSignal
+from PyQt6.QtCore import Qt, QObject, pyqtSignal, QSettings, QTimer
 from utils.obj import Wavefront
 from utils.plugins import Revorb, Ww2Ogg, NvttExport
+from enum import Enum
+import subprocess
+
+
+class ConvertTypes:
+    GENERIC = "generic"
+    PNG = "png"
+    OBJ = "obj"
+    OGG = "ogg"
+
 
 load_dotenv()
 
 CONFIG_FILE = "./config.json"
-VERSION = "v1.8.1"
+VERSION = "v2.0.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS = {
     "tq": {"name": "Tranquility", "id": "TQ"},
@@ -48,12 +58,26 @@ STYLE_SHEET = open(
 ).read()
 DB = json.loads(open("./db.json", "r").read())
 
+try:
+    PROC = subprocess.Popen(
+        ["cmd.exe"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+except FileNotFoundError:
+    print("could not find cmd.exe")
+except Exception as e:
+    print(f"could not open cmd.exe: {e}")
+
 
 class EVEDirectory(QTreeWidgetItem):
-    def __init__(self, parent, text="", icon=None):
+    def __init__(self, parent, text="", filename="", icon=None):
         super().__init__(parent)
         self.setText(0, text)
         self.setIcon(0, icon)
+        self.filename = filename
         self.items = []
         self.size = int()
 
@@ -67,6 +91,7 @@ class EVEFile(QTreeWidgetItem):
         parent,
         text="",
         filename="",
+        description="",
         respath="",
         resfile_hash="",
         size=0,
@@ -76,10 +101,11 @@ class EVEFile(QTreeWidgetItem):
         self.setText(0, text)
         self.setIcon(0, icon)
         self.filename = filename
+        self.description = description
         self.size = int(size)
         self.respath = respath
         self.resfile_hash = resfile_hash
-        self.setToolTip(0, filename)
+        self.setToolTip(0, description)
 
 
 class ResFileIndex:
@@ -192,6 +218,10 @@ class ResTree(QTreeWidget):
         self.setColumnWidth(0, 775)
         self.setColumnWidth(1, 50)
         self.header().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+
+        self.last_saved_dir = ""
+        self.settings = QSettings("cynostudios", "Cyno Exporter")
 
         self.chinese_client = chinese_client
         self.client = client
@@ -201,7 +231,6 @@ class ResTree(QTreeWidget):
         self.event_logger = event_logger
 
         self.protected_label = None
-
         self.icon_atlas = QPixmap("./icons/icons.png")
         try:
             self.config = json.loads(open(CONFIG_FILE, "r", encoding="utf-8").read())
@@ -212,6 +241,9 @@ class ResTree(QTreeWidget):
             self.config = json.loads(open(CONFIG_FILE, "r", encoding="utf-8").read())
 
         self.show()
+
+    def mouseMoveEvent(self, e):
+        return
 
     def _show_selected_item(self):
         try:
@@ -295,49 +327,44 @@ class ResTree(QTreeWidget):
         except:
             self.event_logger.add(f"Request failed: {url}")
 
-    def _save_as_obj_command(self, item):
-        out_file = self._save_file_command(item)
-        if not out_file:
-            return
-        Wavefront().to_obj(out_file)
-        self.event_logger.add(f"Obj exported: {out_file}")
+    def _save_file_dialog(self, item, type: ConvertTypes, is_multi_select=False):
 
-    def _save_as_png(self, out_file_path):
-        NvttExport().run(out_file_path)
-        os.remove(out_file_path)
+        options = QFileDialog.Option.DontUseNativeDialog
+        self.last_saved_dir = self.settings.value("last_dir", "")
 
-    def _save_as_ogg_command(self, out_file_path):
-        stdout, wem = Ww2Ogg().run(out_file_path)
-        temp = os.path.join(
-            os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.temp"
-        )
-
-        if stdout is not None:
-            self.event_logger.add(
-                f"Could not convert: {out_file_path}\n\n{str(stdout)}"
+        if is_multi_select:
+            destination_path = QFileDialog.getExistingDirectory(
+                self,
+                "Select Destination",
+                self.last_saved_dir,
+                options=options | QFileDialog.Option.ShowDirsOnly,
             )
-            return
 
-        os.remove(out_file_path)
-        Revorb().run(wem, temp)
-        os.remove(wem)
-        os.rename(
-            temp,
-            os.path.join(
-                os.path.dirname(out_file_path), f"{out_file_path.split('.')[0]}.ogg"
-            ),
-        )
-
-    def _save_file_command(self, item, multiple=False, multiple_destination=None, convert_dds=False):
-        if not multiple:
-            dest_location, _ = QFileDialog.getSaveFileName(
-                None, "Save File", item.text(0), "All Files(*.)"
-            )
-            if not dest_location:
+            if not destination_path:
                 return
-            out_file_path = dest_location
-        else:
-            out_file_path = multiple_destination
+
+            for file in item:
+                out_path = os.path.join(destination_path, file.text(0))
+                self._save_file(file, out_path, type)
+            return
+
+        destination_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save File",
+            os.path.join(self.last_saved_dir, item.text(0)),
+            "All Files(*.)",
+            options=options,
+        )
+        if not destination_path:
+            return
+
+        self.settings.setValue("last_dir", os.path.dirname(destination_path))
+
+        self._save_file(item, destination_path, type)
+
+    def _save_file(self, item, out_path, type: ConvertTypes):
+        if not isinstance(item, EVEFile):
+            return
 
         if self.client is None:
             folder, resfile_hash = item.resfile_hash.split("/", 1)
@@ -345,24 +372,47 @@ class ResTree(QTreeWidget):
                 os.path.join(
                     self.config["SharedCacheLocation"], "ResFiles", folder, resfile_hash
                 ),
-                out_file_path,
+                out_path,
             )
         else:
-            self.download_file(
-                item=item,
-                dest_path=out_file_path,
+            self.download_file(item, out_path)
+
+        if type == ConvertTypes.OBJ:
+            Wavefront.to_obj(out_path)
+            self.event_logger.add(f"OBJ exported: {out_path}")
+        elif type == ConvertTypes.PNG:
+            NvttExport(PROC).run(out_path)
+            self.event_logger.add(f"DDS exported: {out_path}")
+        elif type == ConvertTypes.OGG:
+            stdout, wem = Ww2Ogg().run(out_path)
+            temp = os.path.join(
+                os.path.dirname(out_path), f"{out_path.split('.')[0]}.temp"
             )
 
-        if convert_dds and out_file_path.lower().endswith(".dds"):
-            self._save_as_png(out_file_path)
-        if out_file_path.lower().endswith(".wem"):
-            self._save_as_ogg_command(out_file_path)
-        if not multiple:
-            self.event_logger.add(f"Exported resfile to: {out_file_path}")
-        return out_file_path if not multiple else item.filename
+            if stdout is not None:
+                self.event_logger.add(f"Could not convert: {out_path}\n\n{str(stdout)}")
+                return
 
-    def _save_folder_command(self, item, convert_dds=False):
-        dest_folder = QFileDialog.getExistingDirectory(None, "Select Destination")
+            os.remove(out_path)
+            Revorb().run(wem, temp)
+            os.remove(wem)
+            os.rename(
+                temp,
+                os.path.join(
+                    os.path.dirname(out_path), f"{out_path.split('.')[0]}.ogg"
+                ),
+            )
+            self.event_logger.add(f"WEM exported: {out_path}")
+
+        return item.text(0)
+
+    def _save_folder_command(self, item):
+        options = (
+            QFileDialog.Option.DontUseNativeDialog | QFileDialog.Option.ShowDirsOnly
+        )
+        dest_folder = QFileDialog.getExistingDirectory(
+            self, "Select Destination", self.last_saved_dir, options=options
+        )
         if not dest_folder:
             return
 
@@ -381,7 +431,9 @@ class ResTree(QTreeWidget):
                     )
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
                     futures.append(
-                        worker.submit(self._save_file_command, file, True, file_path, convert_dds)
+                        worker.submit(
+                            self._save_file, file, file_path, ConvertTypes.GENERIC
+                        )
                     )
 
             for future in concurrent.futures.as_completed(futures):
@@ -413,7 +465,7 @@ class ResTree(QTreeWidget):
         if self.are_resfiles_loaded:
             return
         parent.clear()
-        root = EVEDirectory(parent, "res:", QIcon("./icons/res.png"))
+        root = EVEDirectory(parent, text="res:", icon=QIcon("./icons/res.png"))
         root.setExpanded(True)
 
         if self.protected_label is not None:
@@ -461,7 +513,10 @@ class ResTree(QTreeWidget):
     def add_directory(self, part, parent, path, dir_map):
         if path not in dir_map:
             dir_item = EVEDirectory(
-                parent, text=part, icon=QIcon(self.icon_atlas.copy(16, 0, 15, 16))
+                parent,
+                text=part,
+                filename=part,
+                icon=QIcon(self.icon_atlas.copy(16, 0, 15, 16)),
             )
             dir_map[path] = dir_item
             parent.add(dir_item)
@@ -531,16 +586,26 @@ class ResTree(QTreeWidget):
                 full_path = os.path.join(full_path, segment)
                 parent = self.add_directory(segment, parent, full_path, dir_map)
 
-            description = DB.get(file_name, file_name)
+            if not file_name in DB:
+                db = DB.setdefault(
+                    file_name, {"description": "", "aliases": [file_name]}
+                )
+            else:
+                db = DB[file_name]
+
+            description = db.get("description", "")
+            aliases = db.get("aliases", [])
             file_item = EVEFile(
                 parent,
                 text=file_name,
-                filename=description,
+                filename=file_name,
+                description=description,
                 size=resfile["size"],
                 respath=resfile["res_path"],
                 resfile_hash=resfile["resfile_hash"],
                 icon=icon,
             )
+            file_item.setData(0, Qt.ItemDataRole.UserRole, aliases)
             file_size = int(resfile["size"])
             file_item.setText(1, self._format_filesize(file_size))
             parent.add(file_item)
@@ -587,26 +652,74 @@ class ResTree(QTreeWidget):
             menu = QMenu(self)
 
             if isinstance(item, EVEDirectory) and item.text(0) != "res:":
-                save_folder_action = menu.addAction("Save folder" )
-                save_folder_action.triggered.connect(lambda: self._save_folder_command(item))
+                save_folder_action = menu.addAction("Save folder")
+                save_folder_action.triggered.connect(
+                    lambda: self._save_folder_command(item)
+                )
                 menu.addSeparator()
-                save_folder_and_convert_dds_action = menu.addAction("Save folder | convert dds -> png")
-                save_folder_and_convert_dds_action.triggered.connect(lambda: self._save_folder_command(item, convert_dds=True))
+                # save_folder_and_convert_dds_action = menu.addAction(
+                #     "Save folder | convert dds -> png"
+                # )
+                # save_folder_and_convert_dds_action.triggered.connect(
+                #     lambda: self._save_folder_command(item)
+                # )
             elif isinstance(item, EVEFile):
                 sub_menu = QMenu("Export...", menu)
                 sub_menu.installEventFilter(ContextMenuFilter(sub_menu))
                 menu.addMenu(sub_menu)
-                save_file_action = sub_menu.addAction("Save file")
-                save_file_action.triggered.connect(lambda: self._save_file_command(item))
-                sub_menu.addSeparator()
-                if item.text(0).endswith(".gr2"):
+                if len(self.selectedItems()) > 1:
+                    items = self.selectedItems()
+
+                    def ctx():
+                        ALL_DDS = all(f.text(0).lower().endswith(".dds") for f in items)
+                        ALL_GR2 = all(f.text(0).lower().endswith(".gr2") for f in items)
+                        ALL_WEM = all(f.text(0).lower().endswith(".wem") for f in items)
+
+                        if ALL_DDS:
+                            return ConvertTypes.PNG
+                        elif ALL_GR2:
+                            return ConvertTypes.OBJ
+                        elif ALL_WEM:
+                            return ConvertTypes.OGG
+
+                        return ConvertTypes.GENERIC
+
+                    ctx = ctx()
+
+                    sub_menu.addAction("Save selected files").triggered.connect(
+                        lambda: self._save_file_dialog(
+                            items, ConvertTypes.GENERIC, is_multi_select=True
+                        )
+                    )
+                    if ctx != ConvertTypes.GENERIC:
+                        sub_menu.addSeparator()
+                        sub_menu.addAction(
+                            f"Save selected as .{ctx}"
+                        ).triggered.connect(
+                            lambda: self._save_file_dialog(
+                                items, ctx, is_multi_select=True
+                            )
+                        )
+                else:
+                    sub_menu.addAction("Save file").triggered.connect(
+                        lambda: self._save_file_dialog(item, ConvertTypes.GENERIC)
+                    )
                     sub_menu.addSeparator()
-                    export_obj_action = sub_menu.addAction("Save as .obj")
-                    export_obj_action.triggered.connect(lambda: self._save_as_obj_command(item))
-                elif item.text(0).endswith(".dds"):
-                    sub_menu.addSeparator()
-                    export_png_action = sub_menu.addAction("Save as .png")
-                    export_png_action.triggered.connect(lambda: self._save_as_png(self._save_file_command(item)))
+                    if item.text(0).endswith(".gr2"):
+                        sub_menu.addSeparator()
+                        sub_menu.addAction("Save as .obj").triggered.connect(
+                            lambda: self._save_file_dialog(item, ConvertTypes.OBJ)
+                        )
+                    elif item.text(0).endswith(".dds"):
+                        sub_menu.addSeparator()
+                        sub_menu.addAction("Save as .png").triggered.connect(
+                            lambda: self._save_file_dialog(item, ConvertTypes.PNG)
+                        )
+                    elif item.text(0).endswith(".wem"):
+                        sub_menu.addSeparator()
+                        sub_menu.addAction("Save as .ogg").triggered.connect(
+                            lambda: self._save_file_dialog(item, ConvertTypes.OGG)
+                        )
 
                 menu.addAction(f"{item.filename}").setEnabled(False)
 
@@ -708,7 +821,12 @@ class CynoExporterWindow(QMainWindow):
 
         self.text_box = QLineEdit()
         self.text_box.setPlaceholderText("Search... ex: af3_t1.gr2, Punisher")
-        self.text_box.textChanged.connect(self._search)
+        self.timer = QTimer()
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self._search)
+
+        self.pending_query = ""
+        self.text_box.textChanged.connect(self._debounce_search)
         self.text_box.returnPressed.connect(self._next_search_item)
         self.search_results = []
         self.search_index = -1
@@ -723,22 +841,56 @@ class CynoExporterWindow(QMainWindow):
         main_layout.addWidget(self.text_box)
         main_layout.addWidget(self.search_label)
 
+    def _debounce_search(self, search_str):
+        self.pending_query = search_str
+        self.timer.stop()
+        self.timer.start(400)
+
+    def _show_all_items(self, item):
+        item.setHidden(False)
+        for i in range(item.childCount()):
+            self._show_all_items(item.child(i))
+
+    def _filter_items(self, item, search_str):
+        text_lower = item.text(0).lower()
+        filename_lower = item.filename.lower()
+
+        aliases = item.data(0, Qt.ItemDataRole.UserRole) or []
+        found_alias = next(
+            (x for x in aliases if isinstance(x, str) and search_str in x.lower()), None
+        )
+
+        found = search_str in text_lower or search_str in filename_lower or found_alias
+        found_child = False
+        for i in range(item.childCount()):
+            found_child = self._filter_items(item.child(i), search_str) or found_child
+        if item.text(0) != "res:":
+            item.setHidden(not (found or found_child))
+        return found or found_child
+
     def _search_shortcut(self):
         self.text_box.setFocus()
 
     def _get_searches(self, item, search_str):
         results = []
+        aliases = item.data(0, Qt.ItemDataRole.UserRole) or []
+        found_alias = next(
+            (x for x in aliases if isinstance(x, str) and search_str in x.lower()), None
+        )
         if isinstance(item, EVEFile) and (
-            search_str in item.filename.lower() or search_str in item.text(0).lower()
+            found_alias or search_str in item.text(0).lower()
         ):
             results.append(item)
 
         for i in range(item.childCount()):
             results.extend(self._get_searches(item.child(i), search_str))
 
-        return results
+        return list(sorted(results, key=lambda x: len(x.text(0))))
 
-    def _search(self, search_str):
+    def _search(self):
+
+        search_str = self.pending_query
+
         tree = self.tab_widget.currentWidget()
         self.search_label.setText("")
         if not isinstance(tree, ResTree):
@@ -747,13 +899,20 @@ class CynoExporterWindow(QMainWindow):
         self.search_results.clear()
         self.search_index = -1
 
-        if not search_str:
-            tree.collapseAll()
+        root = tree.topLevelItem(0)
+        if not root:
             return
 
-        root = tree.topLevelItem(0)
-        if root:
-            self.search_results = self._get_searches(root, search_str.lower())
+        if not search_str:
+            self._show_all_items(root)
+            tree.collapseAll()
+            root.setExpanded(True)
+            return
+
+        search_str = search_str.lower()
+
+        self._filter_items(root, search_str)
+        self.search_results = self._get_searches(root, search_str)
 
         if self.search_results:
             self.search_index = 0
@@ -766,7 +925,7 @@ class CynoExporterWindow(QMainWindow):
     def _next_search_item(self):
         tree = self.tab_widget.currentWidget()
         if not self.search_results:
-            self._search(self.text_box.text())
+            self._search()
             return
         self.search_index = (self.search_index + 1) % len(self.search_results)
         self._select_search_item(tree)
@@ -785,7 +944,7 @@ class CynoExporterWindow(QMainWindow):
 
     def set_shared_cache(self):
         folder = QFileDialog.getExistingDirectory(
-            None, "Path to EVE's SharedCache folder"
+            self, "Path to EVE's SharedCache folder"
         )
         if not folder:
             return
@@ -802,6 +961,8 @@ class CynoExporterWindow(QMainWindow):
     def closeEvent(self, event):
         # i do this because if you exit while its still loading resfiles
         # the app will persist due to how the loading widget operates
+        PROC.stdin.write("\nexit\n")
+        PROC.terminate()
         os.system('taskkill /F /IM "Cyno Exporter.exe"')
 
     def on_tab_change(self, i):

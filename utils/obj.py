@@ -18,12 +18,16 @@ class Wavefront:
                     "tangent": vertex.get("tangent", []),  # unsupported
                     "normal": vertex.get("normal", []),
                     "texcoord0": vertex["texcoord0"],
-                    "indices": [{"name": i["name"], "faces": i["faces"]} for i in mesh["indices"]],
-                }
+                    "indices": [
+                        {"name": i["name"], "faces": i["faces"]}
+                        for i in mesh["indices"]
+                    ],
+                } 
             )
         return data
 
-    def to_obj(self, gr2_json):
+    @staticmethod
+    def to_obj(gr2_json):
         Gr2ToJson().run(gr2_json)
         meshes = Wavefront.from_gr2_json(gr2_json)
 
@@ -31,22 +35,22 @@ class Wavefront:
         model_offset = 1
 
         for mesh in meshes:
-            plaintext.append(self.o(mesh["name"]))
+            plaintext.append(Wavefront.o(mesh["name"]))
 
             for i in range(0, len(mesh["position"]), 3):
-                plaintext.append(self.v(mesh["position"][i : i + 3]))
+                plaintext.append(Wavefront.v(mesh["position"][i : i + 3]))
 
             for i in range(0, len(mesh["texcoord0"]), 2):
-                plaintext.append(self.vt(mesh["texcoord0"][i : i + 2]))
+                plaintext.append(Wavefront.vt(mesh["texcoord0"][i : i + 2]))
 
             if mesh["normal"]:
                 for i in range(0, len(mesh["normal"]), 3):
-                    plaintext.append(self.vn(mesh["normal"][i : i + 3]))
+                    plaintext.append(Wavefront.vn(mesh["normal"][i : i + 3]))
 
-            plaintext.append(self.s())
+            plaintext.append(Wavefront.s())
 
             for indice in mesh["indices"]:
-                plaintext.append(self.usemtl(indice["name"]))
+                plaintext.append(Wavefront.usemtl(indice["name"]))
                 faces = indice["faces"]
                 texcoords = mesh["texcoord0"]
                 for i in range(0, len(faces), 3):
@@ -54,7 +58,7 @@ class Wavefront:
                     v2 = faces[i + 1] + model_offset
                     v3 = faces[i + 2] + model_offset
                     plaintext.append(
-                        self.f(
+                        Wavefront.f(
                             v1=v1,
                             v2=v2,
                             v3=v3,
@@ -69,23 +73,30 @@ class Wavefront:
         os.remove(gr2_json)
         os.remove(f"{gr2_json}.gr2_json")
 
-    def o(self, name):
+    @staticmethod
+    def o(name):
         return f"o {name}"
 
-    def v(self, *v):
+    @staticmethod
+    def v(*v):
         return f"v {' '.join(map(str, *v))}"
 
-    def vn(self, *n):
+    @staticmethod
+    def vn(*n):
         return f"vn {' '.join(map(str, *n))}"
 
-    def vt(self, *vt):
+    @staticmethod
+    def vt(*vt):
         return f"vt {' '.join(map(str, *vt))}"
 
-    def usemtl(self, mtl):
+    @staticmethod
+    def usemtl(mtl):
         return f"usemtl {mtl}"
 
-    def s(self):
+    @staticmethod
+    def s():
         return f"s 1"
 
-    def f(self, v1, v2, v3):
+    @staticmethod
+    def f(v1, v2, v3):
         return f"f {v1}/{v1}/{v1} {v2}/{v2}/{v2} {v3}/{v3}/{v3}"

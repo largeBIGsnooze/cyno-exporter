@@ -1,9 +1,11 @@
 import os, subprocess
+import threading
+import time
 
 
 class Plugins:
     def __init__(self, *plugin):
-        self.cwd = "./tools"
+        self.cwd = "tools"
         self.exe = os.path.join(self.cwd, *plugin)
 
     def run(self, *args):
@@ -15,6 +17,21 @@ class Plugins:
             text=True,
         ).stdout
         return stdout
+
+    def _read_output(self, pipe):
+        for line in iter(pipe.readline, ""):
+            print(line, end="")
+
+    def write(self, proc, command):
+        threading.Thread(
+            target=self._read_output, args=(proc.stdout,), daemon=True
+        ).start()
+        threading.Thread(
+            target=self._read_output, args=(proc.stderr,), daemon=True
+        ).start()
+
+        proc.stdin.write(command)
+        proc.stdin.flush()
 
 
 class Gr2ToJson(Plugins):
@@ -34,13 +51,25 @@ class Revorb(Plugins):
 
 
 class NvttExport(Plugins):
-    def __init__(self):
+    def __init__(self, proc):
         super().__init__("nvidia", "nvtt_export.exe")
+        self.proc = proc
+
+    def _read_output(self, pipe):
+        for line in iter(pipe.readline, ""):
+            print(line, end="")
 
     def run(self, *args):
         filename = os.path.splitext(args[0])[0]
         dir_path = os.path.dirname(args[0])
-        super().run(args[0], "-o", os.path.join(dir_path, f"{filename}.png"))
+        out = os.path.join(dir_path, f"{filename}.png")
+
+        self.write(self.proc, f'{self.exe} "{args[0]}" -o "{out}"\n')
+
+        while not os.path.exists(out):
+            time.sleep(0.01)
+
+        os.remove(args[0])
 
 
 class Ww2Ogg(Plugins):
