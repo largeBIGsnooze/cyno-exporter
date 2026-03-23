@@ -1,14 +1,15 @@
 import os, subprocess
 import threading
 import time
+from typing import Any
 
 
 class Plugins:
-    def __init__(self, *plugin):
+    def __init__(self, *plugin: Any) -> None:
         self.cwd = "tools"
         self.exe = os.path.join(self.cwd, *plugin)
 
-    def run(self, *args):
+    def run(self, *args: Any) -> Any:
         stdout = subprocess.run(
             [self.exe, *args],
             creationflags=subprocess.CREATE_NO_WINDOW,
@@ -18,11 +19,11 @@ class Plugins:
         ).stdout
         return stdout
 
-    def _read_output(self, pipe):
+    def _read_output(self, pipe: Any) -> None:
         for line in iter(pipe.readline, ""):
             print(line, end="")
 
-    def write(self, proc, command):
+    def write(self, proc: Any, command: str) -> None:
         threading.Thread(
             target=self._read_output, args=(proc.stdout,), daemon=True
         ).start()
@@ -35,31 +36,35 @@ class Plugins:
 
 
 class Gr2ToJson(Plugins):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("gr2tojson", "gr2tojson.exe")
 
-    def run(self, *args):
+    def run(self, *args: Any) -> None:
         super().run(*args)
 
 
 class Revorb(Plugins):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("revorb", "revorb.exe")
 
-    def run(self, *args):
+    def run(self, *args: Any) -> None:
         super().run(*args)
 
 
+class BlackReader(Plugins):
+    def __init__(self) -> None:
+        super().__init__("black_reader", "black_reader.exe")
+
+    def run(self, *args: Any) -> None:
+        return super().run(*args)
+
+
 class NvttExport(Plugins):
-    def __init__(self, proc):
+    def __init__(self, proc: Any) -> None:
         super().__init__("nvidia", "nvtt_export.exe")
         self.proc = proc
 
-    def _read_output(self, pipe):
-        for line in iter(pipe.readline, ""):
-            print(line, end="")
-
-    def run(self, *args):
+    def run(self, *args: Any) -> None:
         filename = os.path.splitext(args[0])[0]
         dir_path = os.path.dirname(args[0])
         out = os.path.join(dir_path, f"{filename}.png")
@@ -73,10 +78,10 @@ class NvttExport(Plugins):
 
 
 class Ww2Ogg(Plugins):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("ww2ogg", "ww2ogg.exe")
 
-    def run(self, *args):
+    def run(self, *args: Any) -> Any:
         filename = os.path.splitext(args[0])
         dest = os.path.dirname(args[0])
         old = os.path.join(dest, f"{filename[0]}{filename[1]}")

@@ -27,10 +27,10 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QIcon, QPixmap, QAction, QKeySequence, QShortcut
 from PyQt6.QtCore import Qt, QObject, pyqtSignal, QSettings, QTimer
+from utils.plugins import Revorb, Ww2Ogg, NvttExport, BlackReader
 from utils.obj import Wavefront
-from utils.plugins import Revorb, Ww2Ogg, NvttExport
-from enum import Enum
 import subprocess
+from typing import Any, List, Optional, Union, Dict, cast
 
 
 class ConvertTypes:
@@ -38,6 +38,7 @@ class ConvertTypes:
     PNG = "png"
     OBJ = "obj"
     OGG = "ogg"
+    BLACK = "black"
 
 
 load_dotenv()
@@ -45,7 +46,7 @@ load_dotenv()
 CONFIG_FILE = "./config.json"
 VERSION = "v2.0.0"
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
-CLIENTS = {
+CLIENTS: Dict[str, Dict[str, Any]] = {
     "tq": {"name": "Tranquility", "id": "TQ"},
     "sisi": {"name": "Singularity", "id": "SISI"},
     "serenity": {"name": "Serenity", "id": "SERENITY"},
@@ -59,8 +60,9 @@ STYLE_SHEET = open(
 DB = json.loads(open("./db.json", "r").read())
 
 try:
-    PROC = subprocess.Popen(
+    PROC: Any = subprocess.Popen(
         ["cmd.exe"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -73,31 +75,37 @@ except Exception as e:
 
 
 class EVEDirectory(QTreeWidgetItem):
-    def __init__(self, parent, text="", filename="", icon=None):
-        super().__init__(parent)
+    def __init__(
+        self,
+        parent: Optional[Union[QTreeWidget, QTreeWidgetItem]],
+        icon: QIcon,
+        text: str = "",
+        filename: str = "",
+    ) -> None:
+        super().__init__(parent)  # type: ignore
         self.setText(0, text)
         self.setIcon(0, icon)
         self.filename = filename
-        self.items = []
+        self.items: List[Any] = []
         self.size = int()
 
-    def add(self, item):
+    def add(self, item: QTreeWidgetItem):
         self.items.append(item)
 
 
 class EVEFile(QTreeWidgetItem):
     def __init__(
         self,
-        parent,
-        text="",
-        filename="",
-        description="",
-        respath="",
-        resfile_hash="",
-        size=0,
-        icon=QIcon(),
+        parent: QTreeWidgetItem,
+        text: str = "",
+        filename: str = "",
+        description: str = "",
+        respath: str = "",
+        resfile_hash: str = "",
+        size: int = 0,
+        icon: QIcon = QIcon(),
     ):
-        super().__init__(parent)
+        super().__init__(parent)  # type: ignore
         self.setText(0, text)
         self.setIcon(0, icon)
         self.filename = filename
@@ -109,7 +117,7 @@ class EVEFile(QTreeWidgetItem):
 
 
 class ResFileIndex:
-    def __init__(self, chinese_client=False, event_logger=None):
+    def __init__(self, chinese_client: bool = False, event_logger: Any = None):
         self.chinese_client = chinese_client
         self.event_logger = event_logger
 
@@ -121,8 +129,9 @@ class ResFileIndex:
             self.binaries_url = f"{os.environ.get('CHINESE_CDN')}/binaries"
             self.resources_url = f"{os.environ.get('CHINESE_CDN')}/resources"
 
-    def fetch_client(self, client, timeout=10):
+    def fetch_client(self, client: Dict[str, Any], timeout: int = 10):
         base_url = self.chinese_url if self.chinese_client else self.binaries_url
+        response: Any = None
         try:
             response = requests.get(f"{base_url}/{client}", timeout=timeout)
             if response.status_code == 200:
@@ -138,8 +147,8 @@ class ResFileIndex:
             self.event_logger.add(f"Connection failed to: {response.url}")
 
     @staticmethod
-    def resindexfile_object(content):
-        resfile_list = []
+    def resindexfile_object(content: str):
+        resfile_list: List[Dict[str, Any]] = []
         for line in sorted(filter(bool, content.lstrip().splitlines())):
             data = line.lower().split(",")
             resfile_list.append(
@@ -153,7 +162,7 @@ class ResFileIndex:
         return resfile_list
 
     @staticmethod
-    def get_soundbankinfo(content):
+    def get_soundbankinfo(content: Any) -> Union[str, None]:
         return next(
             (
                 bnk["resfile_hash"]
@@ -163,12 +172,12 @@ class ResFileIndex:
             None,
         )
 
-    def fetch_resindexfile(self, build):
+    def fetch_resindexfile(self, build: int) -> str:
         base_url = self.chinese_url if self.chinese_client else self.binaries_url
         response = requests.get(f"{base_url}/eveonline_{build}.txt")
         self.event_logger.add(f"Requesting resindex: {base_url}/eveonline_{build}.txt")
         if response.status_code == 200:
-            resfileindex = next(
+            resfileindex: Any = next(
                 (
                     resfile
                     for resfile in ResFileIndex.resindexfile_object(response.text)
@@ -189,46 +198,50 @@ class ResFileIndex:
                 f.write(content)
 
             return resfileindex_file
-        return None
+        return ""
 
-    def _is_protected(self, client):
+    def _is_protected(self, client: Any) -> bool:
         return bool(client["protected"])
 
-    def _get_build(self, client):
+    def _get_build(self, client: Any) -> int:
         return int(client["build"])
 
 
 class ResTree(QTreeWidget):
     def __init__(
         self,
-        parent=None,
-        client=None,
-        chinese_client=False,
-        event_logger=None,
-        shared_cache=None,
+        parent: Any = None,
+        client: Any = None,
+        chinese_client: bool = False,
+        event_logger: Any = None,
+        shared_cache: Any = None,
     ):
         super().__init__(parent)
 
         self.setHeaderLabel("res: ► ")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_context_menu)
-        self.itemSelectionChanged.connect(self._show_selected_item)
-        self.setHeaderLabels(["", "Size"])
+        self.customContextMenuRequested.connect(self.show_context_menu)  # type: ignore
+        self.itemSelectionChanged.connect(self._show_selected_item)  # type: ignore
+        self.setHeaderLabels(["", "Size"])  # type: ignore
 
         self.setColumnWidth(0, 775)
         self.setColumnWidth(1, 50)
-        self.header().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+
+        self._header = self.header()
+        if self._header:
+            self._header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+
         self.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
 
-        self.last_saved_dir = ""
+        self.last_saved_dir: str = ""
         self.settings = QSettings("cynostudios", "Cyno Exporter")
 
-        self.chinese_client = chinese_client
-        self.client = client
+        self.chinese_client: bool = chinese_client
+        self.client: Any = client
 
-        self.shared_cache = shared_cache
+        self.shared_cache: Any = shared_cache
         self.are_resfiles_loaded = False
-        self.event_logger = event_logger
+        self.event_logger: Any = event_logger
 
         self.protected_label = None
         self.icon_atlas = QPixmap("./icons/icons.png")
@@ -242,29 +255,31 @@ class ResTree(QTreeWidget):
 
         self.show()
 
-    def mouseMoveEvent(self, e):
+    def mouseMoveEvent(self, e):  # type: ignore
         return
 
-    def _show_selected_item(self):
+    def _show_selected_item(self) -> Any:
         try:
-            print(f"Selected item: {self.selectedItems()[0].respath}")
+            print(f"Selected item: {cast(EVEFile, self.selectedItems()[0]).respath}")
             self.setHeaderLabel(
-                "res: ► " + self.selectedItems()[0].respath.replace("/", " ► ")
+                "res: ► "
+                + cast(EVEFile, self.selectedItems()[0]).respath.replace("/", " ► ")
             )
         except:
             pass
 
-    def _get_path_segments(self, item):
-        path_segments = []
+    def _get_path_segments(self, item: Any) -> str:
+        path_segments: Any = []
         try:
             while item and item.text(0) != "res:":
                 path_segments.insert(0, item.text(0))
                 item = item.parent()
-            return os.path.join(*path_segments)
+
+            return cast(str, os.path.join(*path_segments))
         except:
             return ""
 
-    def _get_directory_size(self, directory):
+    def _get_directory_size(self, directory: EVEDirectory) -> int:
         total = 0
         for child in directory.items:
             if isinstance(child, EVEFile):
@@ -274,8 +289,10 @@ class ResTree(QTreeWidget):
         directory.size = total
         return total
 
-    def copy_folder_files(self, folder_item, base_path):
-        files = []
+    def copy_folder_files(
+        self, folder_item: Any, base_path: str
+    ) -> List[QTreeWidgetItem]:
+        files: List[QTreeWidgetItem] = []
         for i in range(folder_item.childCount()):
             child = folder_item.child(i)
             child_name = child.text(0)
@@ -288,10 +305,13 @@ class ResTree(QTreeWidget):
 
         return files
 
-    def download_file_itemless(self, resfile_hash, dest_path):
+    def download_file_itemless(
+        self, resfile_hash: Union[str, None], dest_path: str
+    ) -> None:
         resindex = ResFileIndex(
             chinese_client=self.chinese_client, event_logger=self.event_logger
         )
+        url = None
         try:
             url = f"{resindex.resources_url}/{resfile_hash}"
             response = requests.get(url, timeout=10)
@@ -304,10 +324,11 @@ class ResTree(QTreeWidget):
         except:
             self.event_logger.add(f"Request failed: {url}")
 
-    def download_file(self, item, dest_path, retries=0):
+    def download_file(self, item: EVEFile, dest_path: str, retries: int = 0) -> Any:
         resindex = ResFileIndex(
             chinese_client=self.chinese_client, event_logger=self.event_logger
         )
+        url = None
         try:
             url = f"{resindex.resources_url}/{item.resfile_hash}"
             response = requests.get(url)
@@ -327,7 +348,12 @@ class ResTree(QTreeWidget):
         except:
             self.event_logger.add(f"Request failed: {url}")
 
-    def _save_file_dialog(self, item, type: ConvertTypes, is_multi_select=False):
+    def _save_file_dialog(
+        self,
+        item: Union[Union[List[EVEFile], EVEFile], List[QTreeWidgetItem]],
+        type: str,
+        is_multi_select: bool = False,
+    ):
 
         options = QFileDialog.Option.DontUseNativeDialog
         self.last_saved_dir = self.settings.value("last_dir", "")
@@ -343,11 +369,13 @@ class ResTree(QTreeWidget):
             if not destination_path:
                 return
 
+            item = cast(List[EVEFile], item)
             for file in item:
                 out_path = os.path.join(destination_path, file.text(0))
                 self._save_file(file, out_path, type)
             return
 
+        item = cast(EVEFile, item)
         destination_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save File",
@@ -362,7 +390,7 @@ class ResTree(QTreeWidget):
 
         self._save_file(item, destination_path, type)
 
-    def _save_file(self, item, out_path, type: ConvertTypes):
+    def _save_file(self, item: QTreeWidgetItem, out_path: str, type: Any):
         if not isinstance(item, EVEFile):
             return
 
@@ -403,10 +431,17 @@ class ResTree(QTreeWidget):
                 ),
             )
             self.event_logger.add(f"WEM exported: {out_path}")
+        elif type == ConvertTypes.BLACK:
+            stdout: Any = BlackReader().run(out_path)
+
+            if stdout:
+                QMessageBox.warning(self, "Error", stdout)
+            else:
+                os.remove(out_path)
 
         return item.text(0)
 
-    def _save_folder_command(self, item):
+    def _save_folder_command(self, item: EVEDirectory):
         options = (
             QFileDialog.Option.DontUseNativeDialog | QFileDialog.Option.ShowDirsOnly
         )
@@ -416,15 +451,15 @@ class ResTree(QTreeWidget):
         if not dest_folder:
             return
 
-        path_segments = self._get_path_segments(item)
+        path_segments: str = self._get_path_segments(item)
         files = self.copy_folder_files(item, path_segments)
 
         loading = LoadingScreenWindow(files, stay_on_top=True)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as worker:
-            futures = []
+            futures: List[Any] = []
 
-            for i, file in enumerate(files):
+            for file in files:
                 if isinstance(file, EVEFile):
                     file_path = os.path.normpath(
                         os.path.join(dest_folder, file.respath)
@@ -444,11 +479,13 @@ class ResTree(QTreeWidget):
         self.event_logger.add(f"Exported {len(files)} resfiles to {dest_folder}")
         loading.close()
 
-    def _start_loading(self, root, resfileindex_path, bnk_path):
+    def _start_loading(self, root: Any, resfileindex_path: str, bnk_path: str):
         with open(resfileindex_path, "r", encoding="utf-8") as f:
-            resfileindex = ResFileIndex.resindexfile_object(f.read())
+            resfileindex: List[Dict[str, Any]] = ResFileIndex.resindexfile_object(
+                f.read()
+            )
 
-        bnk_hash = ResFileIndex.get_soundbankinfo(resfileindex)
+        bnk_hash: Union[str, None] = ResFileIndex.get_soundbankinfo(resfileindex)
         self.download_file_itemless(bnk_hash, bnk_path)
 
         with open(bnk_path, "r", encoding="utf-8") as f:
@@ -457,10 +494,10 @@ class ResTree(QTreeWidget):
         start_time = time.time()
 
         self.event_logger.add("Loading resfiles...")
-        self._load_file_tree(root=root, resfiles=resfileindex, bankfileinfo=bnk)
+        self._load_file_tree(root, resfileindex, bnk)
         self.event_logger.add(f"Took {time.time() - start_time:.2f}s to load resfiles")
 
-    def load_resfiles(self, parent, client=None):
+    def load_resfiles(self, parent: QTreeWidget, client: Any = None) -> None:
         self.shared_cache.setEnabled(False)
         if self.are_resfiles_loaded:
             return
@@ -494,8 +531,8 @@ class ResTree(QTreeWidget):
             )
             build = resindex.fetch_client(client)
             if build is not None:
-                resfileindex_file = resindex.fetch_resindexfile(build=build)
-                resfileindex_path = os.path.join("resindex", resfileindex_file)
+                resfileindex_file: str = resindex.fetch_resindexfile(build=build)
+                resfileindex_path: str = os.path.join("resindex", resfileindex_file)
 
                 bnk_path = f"./resindex/{build}_soundbanksinfo.json"
 
@@ -510,7 +547,9 @@ class ResTree(QTreeWidget):
 
         self.shared_cache.setEnabled(True)
 
-    def add_directory(self, part, parent, path, dir_map):
+    def add_directory(
+        self, part: str, parent: EVEDirectory, path: str, dir_map: Dict[str, Any]
+    ):
         if path not in dir_map:
             dir_item = EVEDirectory(
                 parent,
@@ -523,14 +562,16 @@ class ResTree(QTreeWidget):
             parent.setText(1, self._format_filesize(self._get_directory_size(parent)))
         return dir_map[path]
 
-    def add_resfile_filter(self, i, name):
+    def add_resfile_filter(self, i: int, name: str) -> bool:
         if "_lowdetail" in name or "_mediumdetail" in name:
             i += 1
             return True
         return False
 
-    def _load_file_tree(self, root, resfiles, bankfileinfo):
-        dir_map = {}
+    def _load_file_tree(
+        self, root: Any, resfiles: List[Dict[str, Any]], bankfileinfo: Any
+    ):
+        dir_map: Dict[str, Any] = {}
 
         loading = ProgressBar(resfiles, self)
         # loading_label = QLabel("Building tree...", self)
@@ -623,7 +664,7 @@ class ResTree(QTreeWidget):
         # loading_label.close()
         self.are_resfiles_loaded = True
 
-    def set_icon_from_extension(self, ext):
+    def set_icon_from_extension(self, ext: str) -> QIcon:
         if ext == ".png":
             return QIcon(self.icon_atlas.copy(97, 0, 15, 16))
         elif ext == ".dds":
@@ -639,21 +680,20 @@ class ResTree(QTreeWidget):
         else:
             return QIcon(self.icon_atlas.copy(161, 0, 15, 16))
 
-    def _format_filesize(self, size):
+    def _format_filesize(self, size: Union[float, int]):
         size = float(size)
         for unit in ["KB", "MB", "GB"]:
             size /= 1024
             if size <= 1024:
                 return f"{size:.2f} {unit}"
 
-    def show_context_menu(self, point):
+    def show_context_menu(self, point: Any) -> Any:
         item = self.itemAt(point)
         if item:
-            menu = QMenu(self)
+            menu: Any = QMenu(self)
 
             if isinstance(item, EVEDirectory) and item.text(0) != "res:":
-                save_folder_action = menu.addAction("Save folder")
-                save_folder_action.triggered.connect(
+                menu.addAction("Save folder").triggered.connect(
                     lambda: self._save_folder_command(item)
                 )
                 menu.addSeparator()
@@ -664,40 +704,45 @@ class ResTree(QTreeWidget):
                 #     lambda: self._save_folder_command(item)
                 # )
             elif isinstance(item, EVEFile):
-                sub_menu = QMenu("Export...", menu)
+                sub_menu: Any = QMenu("Export...", menu)
                 sub_menu.installEventFilter(ContextMenuFilter(sub_menu))
                 menu.addMenu(sub_menu)
                 if len(self.selectedItems()) > 1:
-                    items = self.selectedItems()
+                    items: List[QTreeWidgetItem] = self.selectedItems()
 
-                    def ctx():
+                    def ctx() -> str:
                         ALL_DDS = all(f.text(0).lower().endswith(".dds") for f in items)
                         ALL_GR2 = all(f.text(0).lower().endswith(".gr2") for f in items)
-                        ALL_WEM = all(f.text(0).lower().endswith(".wem") for f in items)
+                        ALL_WEM = all(f.text(0).lower().endswith(".wem") for f in items) 
+                        ALL_BLACK = all(f.text(0).lower().endswith(".black") for f in items)
 
                         if ALL_DDS:
                             return ConvertTypes.PNG
                         elif ALL_GR2:
                             return ConvertTypes.OBJ
-                        elif ALL_WEM:
+                        elif ALL_WEM: 
                             return ConvertTypes.OGG
-
+                        elif ALL_BLACK:
+                            return ConvertTypes.BLACK
+                         
                         return ConvertTypes.GENERIC
 
-                    ctx = ctx()
+                    _ctx: str = ctx()
 
                     sub_menu.addAction("Save selected files").triggered.connect(
                         lambda: self._save_file_dialog(
-                            items, ConvertTypes.GENERIC, is_multi_select=True
+                            cast(List[EVEFile], items),
+                            ConvertTypes.GENERIC,
+                            is_multi_select=True,
                         )
                     )
-                    if ctx != ConvertTypes.GENERIC:
+                    if _ctx != ConvertTypes.GENERIC:
                         sub_menu.addSeparator()
                         sub_menu.addAction(
-                            f"Save selected as .{ctx}"
+                            f"Save selected as .{_ctx}"
                         ).triggered.connect(
                             lambda: self._save_file_dialog(
-                                items, ctx, is_multi_select=True
+                                items, _ctx, is_multi_select=True
                             )
                         )
                 else:
@@ -720,18 +765,26 @@ class ResTree(QTreeWidget):
                         sub_menu.addAction("Save as .ogg").triggered.connect(
                             lambda: self._save_file_dialog(item, ConvertTypes.OGG)
                         )
+                    elif item.text(0).endswith(".black"):
+                        sub_menu.addSeparator()
+                        sub_menu.addAction("Save as .json").triggered.connect(
+                            lambda: self._save_file_dialog(item, ConvertTypes.BLACK)
+                        )
 
                 menu.addAction(f"{item.filename}").setEnabled(False)
 
             menu.installEventFilter(ContextMenuFilter(menu))
-            menu.popup(self.viewport().mapToGlobal(point))
+
+            vp = self.viewport()
+            if vp:
+                menu.popup(vp.mapToGlobal(point))
 
 
 class ContextMenuFilter(QObject):
-    def eventFilter(self, context_menu, event):
+    def eventFilter(self, context_menu, event):  # type: ignore
         if isinstance(context_menu, QMenu):
-            if event.type() == event.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.RightButton:
+            if event.type() == event.Type.MouseButtonPress:  # type: ignore
+                if event.button() == Qt.MouseButton.RightButton:  # type: ignore
                     context_menu.close()
                     return True
         return False
@@ -748,19 +801,19 @@ class CynoExporterWindow(QMainWindow):
     def init(self):
 
         self.move(
-            QApplication.primaryScreen().geometry().center() - self.rect().center()
+            QApplication.primaryScreen().geometry().center() - self.rect().center()  # type: ignore
         )
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        self.tab_widget = QTabWidget()
+        self.tab_widget: QTabWidget = QTabWidget()
 
         self.setStyleSheet(STYLE_SHEET)
         self.event_logger = EventLogger()
 
         self.set_shared_cache_action = QAction("&Set Shared Cache", self)
-        self.set_shared_cache_action.triggered.connect(self.set_shared_cache)
+        self.set_shared_cache_action.triggered.connect(self.set_shared_cache)  # type: ignore
         self.set_shared_cache_action.setEnabled(False)
 
         self.shared_cache_tq = ResTree(
@@ -841,21 +894,22 @@ class CynoExporterWindow(QMainWindow):
         main_layout.addWidget(self.text_box)
         main_layout.addWidget(self.search_label)
 
-    def _debounce_search(self, search_str):
+    def _debounce_search(self, search_str: str) -> None:
         self.pending_query = search_str
         self.timer.stop()
         self.timer.start(400)
 
-    def _show_all_items(self, item):
+    def _show_all_items(self, item: Any) -> None:
         item.setHidden(False)
         for i in range(item.childCount()):
-            self._show_all_items(item.child(i))
+            if item:
+                self._show_all_items(item.child(i))
 
-    def _filter_items(self, item, search_str):
+    def _filter_items(self, item: EVEFile, search_str: str) -> Union[bool, str]:
         text_lower = item.text(0).lower()
         filename_lower = item.filename.lower()
 
-        aliases = item.data(0, Qt.ItemDataRole.UserRole) or []
+        aliases: List[Any] = item.data(0, Qt.ItemDataRole.UserRole) or []
         found_alias = next(
             (x for x in aliases if isinstance(x, str) and search_str in x.lower()), None
         )
@@ -863,7 +917,7 @@ class CynoExporterWindow(QMainWindow):
         found = search_str in text_lower or search_str in filename_lower or found_alias
         found_child = False
         for i in range(item.childCount()):
-            found_child = self._filter_items(item.child(i), search_str) or found_child
+            found_child = self._filter_items(item.child(i), search_str) or found_child  # type: ignore
         if item.text(0) != "res:":
             item.setHidden(not (found or found_child))
         return found or found_child
@@ -871,9 +925,9 @@ class CynoExporterWindow(QMainWindow):
     def _search_shortcut(self):
         self.text_box.setFocus()
 
-    def _get_searches(self, item, search_str):
-        results = []
-        aliases = item.data(0, Qt.ItemDataRole.UserRole) or []
+    def _get_searches(self, item: QTreeWidgetItem, search_str: str) -> List[Any]:
+        results: List[QTreeWidgetItem] = []
+        aliases: List[Any] = item.data(0, Qt.ItemDataRole.UserRole) or []
         found_alias = next(
             (x for x in aliases if isinstance(x, str) and search_str in x.lower()), None
         )
@@ -883,7 +937,7 @@ class CynoExporterWindow(QMainWindow):
             results.append(item)
 
         for i in range(item.childCount()):
-            results.extend(self._get_searches(item.child(i), search_str))
+            results.extend(self._get_searches(item.child(i), search_str))  # type: ignore
 
         return list(sorted(results, key=lambda x: len(x.text(0))))
 
@@ -899,7 +953,7 @@ class CynoExporterWindow(QMainWindow):
         self.search_results.clear()
         self.search_index = -1
 
-        root = tree.topLevelItem(0)
+        root: Optional[EVEFile] = cast(EVEFile, tree.topLevelItem(0))
         if not root:
             return
 
@@ -923,14 +977,14 @@ class CynoExporterWindow(QMainWindow):
             self.search_label.setText("")
 
     def _next_search_item(self):
-        tree = self.tab_widget.currentWidget()
+        tree: QTreeWidget = cast(QTreeWidget, self.tab_widget.currentWidget())
         if not self.search_results:
             self._search()
             return
         self.search_index = (self.search_index + 1) % len(self.search_results)
         self._select_search_item(tree)
 
-    def _select_search_item(self, tree):
+    def _select_search_item(self, tree: QTreeWidget):
         item = self.search_results[self.search_index]
         parent = item.parent()
         while parent:
@@ -942,7 +996,7 @@ class CynoExporterWindow(QMainWindow):
             f"{self.search_index + 1} of {len(self.search_results)}"
         )
 
-    def set_shared_cache(self):
+    def set_shared_cache(self) -> Any:
         folder = QFileDialog.getExistingDirectory(
             self, "Path to EVE's SharedCache folder"
         )
@@ -1061,7 +1115,7 @@ class LicenseAgreementDialog(QDialog):
 
 
 class AboutDialogPanel(DialogPanel):
-    def __init__(self, parent):
+    def __init__(self, parent: Any):
         super().__init__(parent, "About")
 
         app_label = QLabel(f"<img src='icon.ico', width='40'> {WINDOW_TITLE}", self)
@@ -1134,7 +1188,7 @@ class AboutDialogPanel(DialogPanel):
 
 
 class ProgressBar(QProgressBar):
-    def __init__(self, files, parent):
+    def __init__(self, files: List[Any], parent: Any):
         super().__init__(parent)
         self.setGeometry(0, 770, 900, 15)
         self.setStyleSheet("border-top: 5px solid #242424;")
@@ -1144,7 +1198,7 @@ class ProgressBar(QProgressBar):
 
 
 class LoadingScreenWindow(QProgressDialog):
-    def __init__(self, files, stay_on_top=False):
+    def __init__(self, files: List[Any], stay_on_top: bool = False):
         super().__init__()
         self.setLabelText("Loading...")
         self.setWindowTitle(WINDOW_TITLE)
@@ -1158,9 +1212,9 @@ class LoadingScreenWindow(QProgressDialog):
         self.setMaximum(len(files))
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
         self.setFixedSize(300, 60)
-        self.move(
-            QApplication.primaryScreen().geometry().center() - self.rect().center()
-        )
+        screen = QApplication.primaryScreen()
+        if screen:
+            self.move(screen.geometry().center() - self.rect().center())
         self.setStyleSheet(STYLE_SHEET)
         self.setWindowModality(
             Qt.WindowModality.WindowModal
@@ -1185,11 +1239,14 @@ if __name__ == "__main__":
 
     def show():
         window.show()
-        window.tab_widget.tabBar().setEnabled(False)
+        tab_bar = window.tab_widget.tabBar()
+        if tab_bar:
+            tab_bar.setEnabled(False)
         window.shared_cache_tq.load_resfiles(
             window.shared_cache_tq, window.shared_cache_tq.client
         )
-        window.tab_widget.tabBar().setEnabled(True)
+        if tab_bar:
+            tab_bar.setEnabled(True)
         sys.exit(app.exec())
 
     if not args.dev:

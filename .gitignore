@@ -5,3 +5,5 @@ dist
 build
 .env
 esi.py
+.mypy_cache
+mypy.ini

@@ -1,12 +1,12 @@
 import os, json, re
 from utils.plugins import Gr2ToJson
-
+from typing import Any 
 
 class Wavefront:
-    @staticmethod
-    def from_gr2_json(obj):
+    @staticmethod   
+    def from_gr2_json(file_path: str) -> list[Any]: 
         data = []
-        with open(f"{obj}.gr2_json", "r") as f:
+        with open(f"{file_path}.gr2_json", "r") as f:
             gr2_json = json.loads(re.sub(r"\-nan\(ind\)|\-inf|inf", "0", f.read()))
 
         for mesh in gr2_json["meshes"]:
@@ -26,10 +26,10 @@ class Wavefront:
             )
         return data
 
-    @staticmethod
-    def to_obj(gr2_json):
-        Gr2ToJson().run(gr2_json)
-        meshes = Wavefront.from_gr2_json(gr2_json)
+    @staticmethod 
+    def to_obj(file_path: str) -> None:
+        Gr2ToJson().run(file_path) 
+        meshes = Wavefront.from_gr2_json(file_path)
 
         plaintext = []
         model_offset = 1
@@ -67,36 +67,36 @@ class Wavefront:
 
             model_offset += len(mesh["position"]) // 3
 
-        with open(f"{gr2_json.replace('.gr2', '')}.obj", "w") as f:
+        with open(f"{file_path.replace('.gr2', '')}.obj", "w") as f:
             f.write("\n".join(plaintext))
 
-        os.remove(gr2_json)
-        os.remove(f"{gr2_json}.gr2_json")
+        os.remove(file_path) 
+        os.remove(f"{file_path}.gr2_json")
 
     @staticmethod
-    def o(name):
+    def o(name: str) -> str:
         return f"o {name}"
 
     @staticmethod
-    def v(*v):
+    def v(*v: Any) -> str:
         return f"v {' '.join(map(str, *v))}"
 
     @staticmethod
-    def vn(*n):
+    def vn(*n: Any) -> str: 
         return f"vn {' '.join(map(str, *n))}"
 
     @staticmethod
-    def vt(*vt):
+    def vt(*vt: Any) -> str:
         return f"vt {' '.join(map(str, *vt))}"
 
     @staticmethod
-    def usemtl(mtl):
+    def usemtl(mtl: str) -> str:
         return f"usemtl {mtl}"
 
     @staticmethod
-    def s():
-        return f"s 1"
+    def s() -> str:
+        return f"s 1" 
 
     @staticmethod
-    def f(v1, v2, v3):
+    def f(v1: int, v2: int, v3: int) -> str:
         return f"f {v1}/{v1}/{v1} {v2}/{v2}/{v2} {v3}/{v3}/{v3}"
