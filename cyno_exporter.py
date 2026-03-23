@@ -38,13 +38,13 @@ class ConvertTypes:
     PNG = "png"
     OBJ = "obj"
     OGG = "ogg"
-    BLACK = "black"
+    BLACK = "json"
 
 
 load_dotenv()
 
 CONFIG_FILE = "./config.json"
-VERSION = "v2.1.0" 
+VERSION = "v2.1.1" 
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS: Dict[str, Dict[str, Any]] = {
     "tq": {"name": "Tranquility", "id": "TQ"},
