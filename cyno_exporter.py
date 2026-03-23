@@ -44,7 +44,7 @@ class ConvertTypes:
 load_dotenv()
 
 CONFIG_FILE = "./config.json"
-VERSION = "v2.0.0"
+VERSION = "v2.1.0" 
 WINDOW_TITLE = f"Cyno Exporter {VERSION}"
 CLIENTS: Dict[str, Dict[str, Any]] = {
     "tq": {"name": "Tranquility", "id": "TQ"},
